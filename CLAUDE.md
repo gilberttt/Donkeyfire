@@ -1,6 +1,6 @@
 # Donkey Fire Concessions: context for Claude
 
-Personal web app for running Donkey Fire Concessions, a concession stand business: sales, expenses, events, menu and recipes, inventory, employees and shifts. Blazor Server on .NET 10, EF Core, SQLite. Built on the BuildTrack architecture (gilberttt/buildtrack). See README.md for features and settings.
+Personal web app for running Donkey Fire Concessions, a concession stand business (logo in `wwwroot/img/logo.png`; colors in `app.css` come from it: fire red #d62f24, flame yellow #f2b630, donkey gray, on black): sales, expenses, events, menu and recipes, inventory, employees and shifts. Blazor Server on .NET 10, EF Core, SQLite. Built on the BuildTrack architecture (gilberttt/buildtrack). See README.md for features and settings.
 
 ## Run, test, migrate
 - Run: `cd src/DonkeyFire.Web && dotnet run`, then open http://localhost:5188. In Development with no Google credentials, the login page shows a "Developer sign-in" button.

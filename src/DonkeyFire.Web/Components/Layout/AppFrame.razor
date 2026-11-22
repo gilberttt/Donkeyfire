@@ -2,7 +2,7 @@
 
 <div class="app">
     <aside class="app-nav" aria-label="Main navigation">
-        <a class="brand" href="/"><span class="brand-mark"><i class="bi bi-fire"></i></span>Donkey Fire</a>
+        <a class="brand-logo" href="/" aria-label="Donkey Fire Concessions, home"><img src="img/logo.png" alt="Donkey Fire Concessions" width="286" height="221" /></a>
         @if (Business is not null)
         {
             <div class="nav-project">
@@ -64,6 +64,7 @@
     <div class="app-main">
         <div class="topbar">
             <button type="button" aria-label="Open menu" @onclick="OpenNav"><i class="bi bi-list"></i></button>
+            <img class="topbar-icon" src="img/icon-192.png" alt="" />
             <span class="title">@(Business?.Name ?? "Donkey Fire")</span>
         </div>
         <div class="page-body">
