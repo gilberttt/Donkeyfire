@@ -45,6 +45,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         b.Entity<Sale>().HasOne(s => s.Event).WithMany().OnDelete(DeleteBehavior.SetNull);
         b.Entity<Sale>().HasOne(s => s.MenuItem).WithMany().OnDelete(DeleteBehavior.SetNull);
         b.Entity<Sale>().HasIndex(s => new { s.BusinessId, s.Date });
+        b.Entity<Sale>().HasIndex(s => new { s.BusinessId, s.ExternalId }).IsUnique().HasFilter("ExternalId IS NOT NULL");
         b.Entity<Expense>().HasOne(e => e.Event).WithMany().OnDelete(DeleteBehavior.SetNull);
         b.Entity<Expense>().HasIndex(e => new { e.BusinessId, e.Date });
         b.Entity<Shift>().HasOne(s => s.Employee).WithMany().OnDelete(DeleteBehavior.Cascade);

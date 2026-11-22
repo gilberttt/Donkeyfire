@@ -13,6 +13,7 @@ A web app for running a concession business: sales by event, expenses with recei
 | **Menu & recipes** | Price, category, and a recipe built from inventory items, so each item shows its cost, food cost % and margin against your target. It suggests the price that hits the target. Items without a recipe can take a manual cost. Hide items to keep them off the ring-up screen. |
 | **Inventory** | Items with unit, cost per unit, on hand, reorder level, supplier and storage location. Add stock (updates the unit cost), use up or waste, count to true up, and full history per item. Low-stock filter, a copyable shopping list grouped by supplier, CSV export. |
 | **Employees & shifts** | Crew with hourly rates. Log one shift for several people at once, with hours, flat pay, tips paid out and an optional event. Shifts keep the rate they were logged at. A "To pay" tab totals what each person is owed and marks them paid. |
+| **Square** | Pulls completed Square orders into Sales: each item (matched to the menu by name, so it uses up inventory), cash or card, tips, and Square's actual processing fee. Refunds come in as negative sales and put ingredients back. Items Square calls something else show up in a "not on your menu" panel with a one-click link. Sync from the Sales page, or on a timer. |
 | **Settings** | Sales tax rate (and whether prices include it), card fee %, payroll burden %, food cost target. Members and roles (Viewer, Editor, Owner) by Google email invite. Delete the business. |
 
 ### How the money is counted
@@ -20,7 +21,8 @@ A web app for running a concession business: sales by event, expenses with recei
 - **Net profit** = net sales − estimated card fees − event commissions − labor (wages + payroll burden) − expenses. This is cash-basis: food is counted when you log the purchase as an expense.
 - **Food cost** = recipe cost of what was sold. It's a ratio to watch, not subtracted again.
 - **Tips** come from the tip jar, so they're tracked per shift but aren't a business cost.
-- Card fees are estimated from card sales. Set the rate to 0 in Settings if you log processor fees as expenses instead.
+- Card fees: Square sales use Square's actual fee. Other card sales use the estimated rate from Settings (set it to 0 if you log processor fees as expenses).
+- Tips customers add on Square are shown, but not counted as sales.
 
 ## Run it locally
 
@@ -42,6 +44,14 @@ These work exactly like BuildTrack:
 - **Google sign-in:** create an OAuth client ID (Web application) with redirect URIs `http://localhost:5188/signin-google` and `https://<your-domain>/signin-google`. Set `Authentication:Google:ClientId` / `ClientSecret` with user-secrets locally or `Authentication__Google__ClientId` / `Authentication__Google__ClientSecret` when hosted.
 - **Allowlist:** `Authentication__AllowedEmails` (comma-separated) is required in Production when Google is configured; invited members can also sign in.
 - **Settings:** `ConnectionStrings:Default`, `Storage:Root`, `Hosting:BehindProxy`, `Backup:Enabled` / `IntervalHours` / `Keep` / `Directory` (daily snapshots plus one before any pending migration).
+
+### Connect Square
+1. In the [Square Developer Dashboard](https://developer.squareup.com/apps), create an application (any name), open **Credentials**, and copy the **Production access token**. It needs permission to read orders and locations (personal access tokens have this).
+2. Store it as a secret, never in the code: `fly secrets set Square__AccessToken=<token> --app donkeyfire` (locally: `dotnet user-secrets set "Square:AccessToken" "<token>"`). For a sandbox token also set `Square__Environment=sandbox`.
+3. In the app, open **Settings → Square**, press **Load locations**, pick your location and the first day to import, and save.
+4. Press **Sync Square** on the Sales page. To sync on a timer as well, set `Square__AutoSyncMinutes=15`.
+
+Each order line is imported once (keyed by Square order and line), so syncing again never double-counts. Each sync starts a day before the last one so late-arriving fees get filled in.
 
 ### Deploy to Fly.io
 The repo includes a `Dockerfile` and `fly.toml` (app `donkeyfire`, volume `donkeyfire_data` mounted at `/data`). Run exactly one machine.

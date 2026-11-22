@@ -4,6 +4,7 @@ public enum BusinessRole { Viewer = 0, Editor = 1, Owner = 2 }
 public enum EventKind { Festival = 0, Sports = 1, Fair = 2, Market = 3, Catering = 4, Storefront = 5, Other = 6 }
 public enum EventStatus { Planned = 0, Done = 1, Cancelled = 2 }
 public enum PaymentMethod { Cash = 0, Card = 1, Other = 2 }
+public enum SaleSource { App = 0, Square = 1 }
 public enum ExpenseCategory
 {
     FoodAndDrink = 0, PaperAndSupplies = 1, PropaneAndFuel = 2, EventFees = 3, PermitsAndLicenses = 4, Equipment = 5,
@@ -42,6 +43,16 @@ public class Business
     public decimal TargetFoodCostPercent { get; set; } = 30;
     public string? Notes { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Square location whose orders are imported. Null when Square isn't connected.</summary>
+    public string? SquareLocationId { get; set; }
+    public string? SquareLocationName { get; set; }
+    /// <summary>IANA time zone of the Square location, used to put each order on the right day.</summary>
+    public string? SquareTimeZone { get; set; }
+    /// <summary>First day to import on the first sync.</summary>
+    public DateOnly? SquareSyncFrom { get; set; }
+    /// <summary>When orders were last pulled. The next sync starts a day before this, so late fees and edits are picked up.</summary>
+    public DateTime? SquareLastSyncAt { get; set; }
 
     public List<BusinessMember> Members { get; set; } = new();
 }
@@ -95,6 +106,8 @@ public class MenuItem
     public bool IsActive { get; set; } = true;
     public int SortOrder { get; set; }
     public string? Notes { get; set; }
+    /// <summary>Other names this item has on Square, one per line (e.g. "Hot Dog (Regular)"). The item's own name always matches.</summary>
+    public string? SquareNames { get; set; }
 
     public List<RecipeLine> Recipe { get; set; } = new();
 }
@@ -166,6 +179,13 @@ public class Sale
     public PaymentMethod Payment { get; set; }
     public string? Note { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public SaleSource Source { get; set; }
+    /// <summary>Square order and line ("orderId:lineUid"), so a re-sync never imports the same line twice.</summary>
+    public string? ExternalId { get; set; }
+    /// <summary>Actual card processing fee for this line (Square's fee spread across the order's lines). Null means estimate it.</summary>
+    public decimal? Fee { get; set; }
+    /// <summary>Tip collected with this line on Square. Passed to the crew, so not counted as sales.</summary>
+    public decimal Tip { get; set; }
 
     public decimal Total => Quantity * UnitPrice;
 }

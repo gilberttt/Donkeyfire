@@ -5,6 +5,8 @@
 @inject ToastService Toasts
 @inject NavigationManager Nav
 @inject IJSRuntime JS
+@inject SquareClient Square
+@inject SquareSync Sync
 
 <PageTitle>Settings · Donkey Fire</PageTitle>
 
@@ -18,6 +20,7 @@
 
     <div class="tabs" role="tablist">
         <button type="button" role="tab" id="tab-details" aria-selected="@(tab == "details")" class="@(tab == "details" ? "active" : "")" @onclick="@(() => tab = "details")"><i class="bi bi-shop"></i> Business</button>
+        <button type="button" role="tab" id="tab-square" aria-selected="@(tab == "square")" class="@(tab == "square" ? "active" : "")" @onclick="@(() => tab = "square")"><i class="bi bi-square"></i> Square</button>
         <button type="button" role="tab" id="tab-members" aria-selected="@(tab == "members")" class="@(tab == "members" ? "active" : "")" @onclick="@(() => tab = "members")"><i class="bi bi-people"></i> Members &amp; roles</button>
         @if (ctx.IsOwner)
         {
@@ -70,6 +73,59 @@
                 </div>
             }
         </fieldset>
+    }
+    else if (tab == "square")
+    {
+        <div class="panel" style="max-width:820px">
+            <div class="panel-head">
+                <h2 class="section-title">Square</h2>
+                @if (ctx.Business.SquareLocationId is not null) { <StatusPill Kind="done" Text="Connected" /> }
+                else if (Square.IsConfigured) { <StatusPill Kind="active" Text="Pick a location" /> }
+                else { <StatusPill Kind="pending" Text="Not set up" /> }
+            </div>
+            <div class="panel-body">
+                <p>Card sales rung up on Square come into Sales automatically: each item, cash or card, tips, and Square's actual processing fee. Items are matched to your menu by name, so they use up inventory just like sales rung up here. Ring up cash sales that don't go through Square on the Sales page.</p>
+                @if (!Square.IsConfigured)
+                {
+                    <div class="alert alert-secondary small">
+                        <strong>Set the access token on the server.</strong> In the <a href="https://developer.squareup.com/apps" target="_blank" rel="noopener">Square Developer Dashboard</a>, create an application, open <em>Credentials</em>, and copy the <em>Production access token</em>. Then:
+                        <pre class="mono small mt-2 mb-1">fly secrets set Square__AccessToken=&lt;token&gt; --app donkeyfire</pre>
+                        Locally, use <span class="mono">dotnet user-secrets set "Square:AccessToken" "&lt;token&gt;"</span>. Add <span class="mono">Square__Environment=sandbox</span> for a sandbox token. Never paste the token into chat or commit it.
+                    </div>
+                }
+                else
+                {
+                    @if (Square.IsSandbox) { <div class="alert alert-warning small py-2">Using Square's sandbox (test data).</div> }
+                    <div class="form-grid">
+                        <div class="full">
+                            <label class="form-label" for="sq-loc">Square location</label>
+                            <div class="d-flex gap-2">
+                                <select id="sq-loc" class="form-select" disabled="@(!ctx.CanEdit)" @bind="squareLocationId">
+                                    <option value="">Not connected</option>
+                                    @if (ctx.Business.SquareLocationId is { } cur && locations.All(l => l.Id != cur)) { <option value="@cur">@ctx.Business.SquareLocationName</option> }
+                                    @foreach (var l in locations) { <option value="@l.Id">@(l.Name ?? l.Id)@(l.Status == "INACTIVE" ? " (inactive)" : "")</option> }
+                                </select>
+                                <button type="button" class="btn btn-outline-secondary text-nowrap" disabled="@squareBusy" @onclick="LoadLocations"><i class="bi bi-arrow-repeat"></i> Load locations</button>
+                            </div>
+                        </div>
+                        <div><label class="form-label" for="sq-from">Import sales starting</label><input id="sq-from" type="date" class="form-control" disabled="@(!ctx.CanEdit || ctx.Business.SquareLastSyncAt is not null)" @bind="squareFrom" />
+                            <div class="small-muted mt-1">@(ctx.Business.SquareLastSyncAt is null ? "Only used for the first sync." : "Set; later syncs pick up from the last one.")</div></div>
+                        <div><span class="form-label d-block">Last synced</span><div class="pt-2">@(ctx.Business.SquareLastSyncAt is { } at ? at.ToLocalTime().ToString("MMM d, h:mm tt") : "Never")</div></div>
+                    </div>
+                    @if (ctx.CanEdit)
+                    {
+                        <div class="d-flex gap-2 flex-wrap mt-3">
+                            <button type="button" class="btn btn-primary" disabled="@squareBusy" @onclick="() => SaveSquare(ctx)"><i class="bi bi-check-lg"></i> Save</button>
+                            @if (ctx.Business.SquareLocationId is not null)
+                            {
+                                <button type="button" class="btn btn-accent" disabled="@squareBusy" @onclick="() => SyncNow(ctx)"><i class="bi bi-cloud-download"></i> @(squareBusy ? "Syncing…" : "Sync now")</button>
+                            }
+                        </div>
+                    }
+                    <p class="small-muted mt-3 mb-0">Sales sync when you press Sync on the Sales page. To sync on a timer too, set <span class="mono">Square__AutoSyncMinutes</span> (for example 15). Refunds come in as negative sales and put ingredients back. Square amounts are what the customer paid, so keep "Menu prices include sales tax" on.</p>
+                }
+            </div>
+        </div>
     }
     else if (tab == "members")
     {
@@ -219,10 +275,16 @@
     private BusinessRole inviteRole = BusinessRole.Editor;
     private string deleteConfirm = "";
     private ConfirmDialog confirm = default!;
+    private List<SquareLocation> locations = new();
+    private string squareLocationId = "";
+    private DateOnly? squareFrom;
+    private bool squareBusy;
 
     private async Task Load(BusinessContext c)
     {
-        if (TabQuery is "members" or "details" || (TabQuery == "danger" && c.IsOwner)) tab = TabQuery;
+        squareLocationId = c.Business.SquareLocationId ?? "";
+        squareFrom = c.Business.SquareSyncFrom ?? DateOnly.FromDateTime(DateTime.Today.AddDays(-30));
+        if (TabQuery is "members" or "details" or "square" || (TabQuery == "danger" && c.IsOwner)) tab = TabQuery;
         await ResetFormAsync();
         await LoadMembers();
     }
@@ -268,6 +330,42 @@
             if (c.Reload is not null) await c.Reload();
         }
         finally { saving = false; }
+    }
+
+    private async Task LoadLocations()
+    {
+        squareBusy = true;
+        try
+        {
+            locations = await Square.GetLocationsAsync();
+            if (locations.Count == 0) Toasts.Error("Square didn't return any locations for this token.");
+            else if (squareLocationId == "" && locations.Count(l => l.Status != "INACTIVE") == 1) squareLocationId = locations.First(l => l.Status != "INACTIVE").Id;
+        }
+        catch (Exception ex) when (ex is SquareException or HttpRequestException or TaskCanceledException) { Toasts.Error(ex is SquareException ? ex.Message : "Couldn't reach Square."); }
+        finally { squareBusy = false; }
+    }
+
+    private async Task SaveSquare(BusinessContext c)
+    {
+        await Access.RequireAsync(BusinessId, BusinessRole.Editor);
+        var loc = locations.FirstOrDefault(l => l.Id == squareLocationId);
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var b = await db.Businesses.FirstAsync(x => x.Id == BusinessId);
+        if (squareLocationId == "") { b.SquareLocationId = null; b.SquareLocationName = null; }
+        else if (loc is not null) { b.SquareLocationId = loc.Id; b.SquareLocationName = loc.Name; b.SquareTimeZone = loc.Timezone; }
+        if (b.SquareLastSyncAt is null) b.SquareSyncFrom = squareFrom;
+        await db.SaveChangesAsync();
+        Toasts.Show(b.SquareLocationId is null ? "Square disconnected. Imported sales are kept." : $"Square connected to {b.SquareLocationName ?? "your location"}.");
+        if (c.Reload is not null) await c.Reload();
+    }
+
+    private async Task SyncNow(BusinessContext c)
+    {
+        squareBusy = true;
+        try { Toasts.Show((await Sync.SyncAsync(BusinessId)).Summary); }
+        catch (Exception ex) when (ex is SquareException or HttpRequestException or TaskCanceledException) { Toasts.Error(ex is SquareException ? ex.Message : "Couldn't reach Square."); }
+        finally { squareBusy = false; }
+        if (c.Reload is not null) await c.Reload();
     }
 
     private async Task LoadMembers()

@@ -2,6 +2,7 @@
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject ToastService Toasts
 @inject IJSRuntime JS
+@inject SalesService SalesSvc
 
 <PageTitle>Menu · Donkey Fire</PageTitle>
 
@@ -70,6 +71,8 @@
                 <div><label class="form-label" for="m-price">Price ($)</label><input id="m-price" type="number" min="0" step="0.25" class="form-control" @bind="form.Price" @bind:event="oninput" /></div>
                 <div><label class="form-label" for="m-order">Order on ring-up</label><input id="m-order" type="number" step="1" class="form-control" @bind="form.SortOrder" /></div>
                 <div class="d-flex align-items-end"><div class="form-check"><input id="m-active" type="checkbox" class="form-check-input" @bind="form.IsActive" /><label class="form-check-label" for="m-active">Show on ring-up</label></div></div>
+                <div class="full"><label class="form-label" for="m-sq">Other names on Square (one per line)</label>
+                    <textarea id="m-sq" class="form-control" rows="2" @bind="form.SquareNames" placeholder="Only if it's named differently on Square, e.g. Hot Dog (Regular)"></textarea></div>
             </div>
 
             <h3 class="eyebrow mt-4 mb-2">Recipe: what one serving uses</h3>
@@ -171,7 +174,7 @@
         form = new MenuItem
         {
             Id = m.Id, BusinessId = m.BusinessId, Name = m.Name, Category = m.Category, Price = m.Price, ManualCost = m.ManualCost,
-            IsActive = m.IsActive, SortOrder = m.SortOrder, Notes = m.Notes,
+            IsActive = m.IsActive, SortOrder = m.SortOrder, Notes = m.Notes, SquareNames = m.SquareNames,
         };
         recipe = m.Recipe.Select(r => new RecipeLine { InventoryItemId = r.InventoryItemId, Quantity = r.Quantity }).ToList();
         editing = true;
@@ -181,6 +184,7 @@
     {
         form.Name = form.Name.Trim();
         form.Category = string.IsNullOrWhiteSpace(form.Category) ? null : form.Category.Trim();
+        form.SquareNames = string.IsNullOrWhiteSpace(form.SquareNames) ? null : form.SquareNames.Trim();
         var lines = recipe.Where(l => l.InventoryItemId != 0 && l.Quantity > 0 && stock.Any(s => s.Id == l.InventoryItemId))
             .GroupBy(l => l.InventoryItemId).Select(g => new RecipeLine { InventoryItemId = g.Key, Quantity = g.Sum(l => l.Quantity) }).ToList();
         if (lines.Count > 0) form.ManualCost = null;
@@ -198,7 +202,8 @@
         db.RecipeLines.AddRange(lines);
         await db.SaveChangesAsync();
         editing = false;
-        Toasts.Show($"Saved {form.Name}.");
+        var linked = await SalesSvc.RematchAsync(BusinessId);
+        Toasts.Show($"Saved {form.Name}." + (linked > 0 ? $" Linked {Fmt.Plural(linked, "Square sale")} to it." : ""));
         await Refresh();
     }
 

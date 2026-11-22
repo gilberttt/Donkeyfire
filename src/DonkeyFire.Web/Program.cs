@@ -115,6 +115,9 @@ builder.Services.AddScoped<BusinessSeeder>();
 builder.Services.AddScoped<BusinessMetrics>();
 builder.Services.AddScoped<SalesService>();
 builder.Services.AddScoped<InventoryService>();
+builder.Services.AddHttpClient<SquareClient>(c => c.Timeout = TimeSpan.FromSeconds(60));
+builder.Services.AddScoped<SquareSync>();
+builder.Services.AddHostedService<SquareAutoSyncService>();
 builder.Services.AddScoped<ToastService>();
 builder.Services.AddSingleton(new AuthOptionsInfo(googleConfigured, devLoginEnabled));
 

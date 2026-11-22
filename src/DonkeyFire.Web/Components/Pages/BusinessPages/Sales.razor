@@ -3,6 +3,7 @@
 @inject SalesService SalesSvc
 @inject ToastService Toasts
 @inject IJSRuntime JS
+@inject SquareSync Sync
 
 <PageTitle>Sales · Donkey Fire</PageTitle>
 
@@ -14,6 +15,12 @@
         </div>
         <div class="actions">
             <button class="btn btn-outline-secondary" @onclick="ExportCsv"><i class="bi bi-download"></i> CSV</button>
+            @if (ctx.CanEdit && SquareOn)
+            {
+                <button class="btn btn-accent" disabled="@syncing" @onclick="SyncSquare" title="@(ctx.Business.SquareLastSyncAt is { } at ? $"Last synced {at.ToLocalTime():MMM d, h:mm tt}" : "Never synced")">
+                    <i class="bi bi-cloud-download"></i> @(syncing ? "Syncing…" : "Sync Square")
+                </button>
+            }
             @if (ctx.CanEdit)
             {
                 <button class="btn btn-outline-secondary" @onclick="NewLump"><i class="bi bi-calculator"></i> Add a lump sum</button>
@@ -21,11 +28,43 @@
         </div>
     </div>
 
+    @if (ctx.CanEdit && unmatched.Count > 0)
+    {
+        <div class="panel mb-3" style="border-color:var(--bt-accent)">
+            <div class="panel-head">
+                <h2 class="section-title">Square items not on your menu</h2>
+                <span class="small-muted">Link each to a menu item so it counts toward food cost and uses up inventory. Past and future sales both update.</span>
+            </div>
+            <div class="table-wrap">
+                <table class="table-bt">
+                    <thead><tr><th>Name on Square</th><th class="r">Sold</th><th class="r">Revenue</th><th>Menu item</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var u in unmatched)
+                        {
+                            <tr>
+                                <td><strong>@u.Name</strong></td><td class="r">@Fmt.Qty(u.Qty)</td><td class="r">@Fmt.Money2(u.Revenue)</td>
+                                <td>
+                                    <label class="visually-hidden" for="@($"um-{u.Name.GetHashCode()}")">Menu item for @u.Name</label>
+                                    <select id="@($"um-{u.Name.GetHashCode()}")" class="form-select form-select-sm" style="min-width:180px" @bind="mapTo[u.Name]">
+                                        <option value="0">Pick a menu item…</option>
+                                        @foreach (var m in allMenu.OrderBy(m => m.Name)) { <option value="@m.Id">@m.Name</option> }
+                                    </select>
+                                </td>
+                                <td class="row-actions"><button class="btn btn-sm btn-primary" disabled="@(mapTo.GetValueOrDefault(u.Name) == 0)" @onclick="() => Link(u.Name)"><i class="bi bi-link-45deg"></i> Link</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="panel-body small-muted border-top py-2">Not food (a donation, a custom amount)? Leave it. It still counts as sales.</div>
+        </div>
+    }
+
     @if (ctx.CanEdit)
     {
         <div class="panel">
             <div class="panel-head">
-                <h2 class="section-title">Ring up</h2>
+                <h2 class="section-title">Ring up@(SquareOn ? " cash" : "")</h2>
                 <div class="d-flex flex-wrap gap-2 align-items-center">
                     <label class="visually-hidden" for="s-date">Date</label>
                     <input id="s-date" type="date" class="form-control form-control-sm" style="width:auto" @bind="date" />
@@ -110,7 +149,7 @@
                         {
                             <tr>
                                 <td class="text-nowrap">@Fmt.Short(s.Date)</td>
-                                <td>@s.Description@if (s.MenuItemId is null) { <span class="pill pill-ok ms-1">Lump sum</span> }@if (!string.IsNullOrWhiteSpace(s.Note)) { <div class="small-muted">@s.Note</div> }</td>
+                                <td>@s.Description@if (s.Source == SaleSource.Square) { <span class="pill pill-sheet ms-1">Square</span> } else if (s.MenuItemId is null) { <span class="pill pill-ok ms-1">Lump sum</span> }@if (!string.IsNullOrWhiteSpace(s.Note)) { <div class="small-muted">@s.Note</div> }</td>
                                 <td>@EventName(s.EventId)</td>
                                 <td>@s.Payment</td>
                                 <td class="r">@Fmt.Qty(s.Quantity)</td>
@@ -169,6 +208,11 @@
     private string preset = "month";
     private int? eventFilter;
     private ConfirmDialog confirm = default!;
+    private bool syncing;
+    private List<MenuItem> allMenu = new();
+    private List<(string Name, decimal Qty, decimal Revenue)> unmatched = new();
+    private readonly Dictionary<string, int> mapTo = new();
+    private bool SquareOn => ctx.Business.SquareLocationId is not null && Sync.IsConfigured;
 
     private bool lumpOpen;
     private string lumpDesc = "";
@@ -192,6 +236,8 @@
         // Default to an event running today, so a day at the stand needs no setup.
         eventId = events.Where(e => e.StartDate <= Today && e.LastDate >= Today).Select(e => (int?)e.Id).FirstOrDefault();
         lumpEvent = eventId;
+        // With Square taking the card sales, what gets rung up here is mostly cash.
+        if (SquareOn) payment = PaymentMethod.Cash;
         await Refresh();
     }
 
@@ -201,6 +247,43 @@
         await using var db = await DbFactory.CreateDbContextAsync();
         sales = await db.Sales.AsNoTracking().Where(s => s.BusinessId == BusinessId && s.Date >= p.From && s.Date <= p.To)
             .OrderByDescending(s => s.Date).ThenByDescending(s => s.Id).ToListAsync();
+        allMenu = await db.MenuItems.AsNoTracking().Where(m => m.BusinessId == BusinessId).ToListAsync();
+        unmatched = (await db.Sales.AsNoTracking().Where(s => s.BusinessId == BusinessId && s.Source == SaleSource.Square && s.MenuItemId == null && s.Description != "Service charge").ToListAsync())
+            .GroupBy(s => s.Description, StringComparer.OrdinalIgnoreCase).Select(g => (g.Key, g.Sum(s => s.Quantity), g.Sum(s => s.Total)))
+            .OrderByDescending(u => u.Item3).ToList();
+        foreach (var u in unmatched) mapTo.TryAdd(u.Name, 0);
+    }
+
+    private async Task SyncSquare()
+    {
+        syncing = true;
+        try
+        {
+            var r = await Sync.SyncAsync(BusinessId);
+            Toasts.Show(r.Summary);
+            if (ctx.Reload is not null) await ctx.Reload();
+            else await Refresh();
+        }
+        catch (Exception ex) when (ex is SquareException or HttpRequestException or TaskCanceledException) { Toasts.Error(ex is SquareException ? ex.Message : "Couldn't reach Square."); }
+        finally { syncing = false; }
+    }
+
+    /// <summary>Adds the Square name to the menu item's Square names, then links every sale with that name.</summary>
+    private async Task Link(string squareName)
+    {
+        var id = mapTo.GetValueOrDefault(squareName);
+        await using (var db = await DbFactory.CreateDbContextAsync())
+        {
+            var m = await db.MenuItems.FirstOrDefaultAsync(x => x.Id == id && x.BusinessId == BusinessId);
+            if (m is null) return;
+            if (!MenuMatcher.NamesOf(m).Contains(squareName, StringComparer.OrdinalIgnoreCase))
+                m.SquareNames = string.IsNullOrWhiteSpace(m.SquareNames) ? squareName : m.SquareNames.TrimEnd() + "\n" + squareName;
+            await db.SaveChangesAsync();
+        }
+        var linked = await SalesSvc.RematchAsync(BusinessId);
+        mapTo.Remove(squareName);
+        Toasts.Show($"Linked {Fmt.Plural(linked, "sale")} to the menu.");
+        await Refresh();
     }
 
     private async Task ChangePeriod(ChangeEventArgs e)
@@ -251,7 +334,8 @@
 
     private async Task Delete(Sale s)
     {
-        var extra = s.MenuItemId is null ? "" : " Any ingredients it used go back into inventory.";
+        var extra = (s.MenuItemId is null ? "" : " Any ingredients it used go back into inventory.")
+            + (s.Source == SaleSource.Square ? " It came from Square, so a sync within a day of it may bring it back; refund it in Square instead." : "");
         if (!await confirm.AskAsync($"Delete {Fmt.Qty(s.Quantity)} × {s.Description} ({Fmt.Money2(s.Total)}) on {Fmt.Date(s.Date)}?{extra}", "Delete this sale?")) return;
         await SalesSvc.DeleteAsync(BusinessId, s.Id);
         Toasts.Show("Sale deleted.");

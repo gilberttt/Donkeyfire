@@ -85,6 +85,21 @@ namespace DonkeyFire.Web.Data.Migrations
                     b.Property<decimal>("SalesTaxPercent")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("SquareLastSyncAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SquareLocationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SquareLocationName")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly?>("SquareSyncFrom")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SquareTimeZone")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("State")
                         .HasColumnType("TEXT");
 
@@ -393,6 +408,9 @@ namespace DonkeyFire.Web.Data.Migrations
                     b.Property<int>("SortOrder")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("SquareNames")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
                     b.HasIndex("BusinessId");
@@ -446,6 +464,12 @@ namespace DonkeyFire.Web.Data.Migrations
                     b.Property<int?>("EventId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("ExternalId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("Fee")
+                        .HasColumnType("TEXT");
+
                     b.Property<int?>("MenuItemId")
                         .HasColumnType("INTEGER");
 
@@ -456,6 +480,12 @@ namespace DonkeyFire.Web.Data.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<decimal>("Quantity")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Source")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Tip")
                         .HasColumnType("TEXT");
 
                     b.Property<decimal>("UnitCost")
@@ -471,6 +501,10 @@ namespace DonkeyFire.Web.Data.Migrations
                     b.HasIndex("MenuItemId");
 
                     b.HasIndex("BusinessId", "Date");
+
+                    b.HasIndex("BusinessId", "ExternalId")
+                        .IsUnique()
+                        .HasFilter("ExternalId IS NOT NULL");
 
                     b.ToTable("Sales");
                 });

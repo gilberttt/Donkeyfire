@@ -35,22 +35,52 @@ public class SalesService(IDbContextFactory<AppDbContext> dbf)
 
         if (deductInventory)
         {
-            foreach (var (sale, m) in sales)
-            {
-                foreach (var r in m.Recipe.Where(r => r.InventoryItem is not null))
-                {
-                    var used = sale.Quantity * r.Quantity;
-                    r.InventoryItem!.OnHand -= used;
-                    db.InventoryAdjustments.Add(new InventoryAdjustment
-                    {
-                        BusinessId = businessId, InventoryItemId = r.InventoryItemId, Date = date, Reason = AdjustmentReason.Sale,
-                        Change = -used, SaleId = sale.Id, Note = $"{Fmt.Qty(sale.Quantity)} × {m.Name}",
-                    });
-                }
-            }
+            foreach (var (sale, m) in sales) UseIngredients(db, sale, m);
             await db.SaveChangesAsync();
         }
         return sales.Select(s => s.Sale).ToList();
+    }
+
+    /// <summary>
+    /// Takes a saved sale's recipe out of inventory, writing Sale adjustments linked to it. The menu item must be tracked by
+    /// <paramref name="db"/> with its recipe and inventory items loaded. The caller saves.
+    /// </summary>
+    internal static void UseIngredients(AppDbContext db, Sale sale, MenuItem m)
+    {
+        foreach (var r in m.Recipe.Where(r => r.InventoryItem is not null))
+        {
+            var used = sale.Quantity * r.Quantity;
+            r.InventoryItem!.OnHand -= used;
+            db.InventoryAdjustments.Add(new InventoryAdjustment
+            {
+                BusinessId = sale.BusinessId, InventoryItemId = r.InventoryItemId, Date = sale.Date, Reason = AdjustmentReason.Sale,
+                Change = -used, SaleId = sale.Id, Note = $"{Fmt.Qty(sale.Quantity)} × {m.Name}",
+            });
+        }
+    }
+
+    /// <summary>
+    /// Links imported sales that came in without a menu item (a name the menu didn't know yet) to menu items whose name or
+    /// Square names now match, and takes their ingredients out of inventory. Returns how many sales were linked.
+    /// </summary>
+    public async Task<int> RematchAsync(int businessId)
+    {
+        await using var db = await dbf.CreateDbContextAsync();
+        var orphans = await db.Sales.Where(s => s.BusinessId == businessId && s.Source == SaleSource.Square && s.MenuItemId == null && s.ExternalId != null).ToListAsync();
+        if (orphans.Count == 0) return 0;
+        var matcher = new MenuMatcher(await db.MenuItems.Where(m => m.BusinessId == businessId)
+            .Include(m => m.Recipe).ThenInclude(r => r.InventoryItem).ToListAsync());
+        var linked = 0;
+        foreach (var sale in orphans)
+        {
+            if (matcher.Find(sale.Description) is not { } m) continue;
+            sale.MenuItemId = m.Id;
+            sale.UnitCost = Math.Round(BusinessMetrics.RecipeCost(m), 4);
+            UseIngredients(db, sale, m);
+            linked++;
+        }
+        await db.SaveChangesAsync();
+        return linked;
     }
 
     public async Task<Sale> RecordLumpSumAsync(int businessId, DateOnly date, int? eventId, PaymentMethod payment, string description, decimal amount, string? note = null)
@@ -80,6 +110,28 @@ public class SalesService(IDbContextFactory<AppDbContext> dbf)
         db.Sales.Remove(sale);
         await db.SaveChangesAsync();
     }
+}
+
+/// <summary>Finds the menu item for a name as it appears on Square: the item's own name or any of its Square names, ignoring case.</summary>
+public class MenuMatcher
+{
+    private readonly Dictionary<string, MenuItem> byName = new(StringComparer.OrdinalIgnoreCase);
+
+    public MenuMatcher(IEnumerable<MenuItem> items)
+    {
+        // Active items win when two items share a name.
+        foreach (var m in items.OrderBy(m => m.IsActive))
+        {
+            foreach (var n in NamesOf(m)) byName[Normalize(n)] = m;
+        }
+    }
+
+    public static IEnumerable<string> NamesOf(MenuItem m) =>
+        new[] { m.Name }.Concat((m.SquareNames ?? "").Split(['\n', '\r', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+    public MenuItem? Find(string? name) => string.IsNullOrWhiteSpace(name) ? null : byName.GetValueOrDefault(Normalize(name));
+
+    private static string Normalize(string s) => string.Join(' ', s.Split(' ', StringSplitOptions.RemoveEmptyEntries));
 }
 
 public class InventoryService(IDbContextFactory<AppDbContext> dbf)

@@ -45,6 +45,10 @@ public class PnL
     public decimal SalesTax { get; init; }
     public decimal NetSales { get; init; }
     public decimal CardFees { get; init; }
+    /// <summary>True when at least some card fees are Square's actual fees rather than the estimate.</summary>
+    public bool ActualFees { get; init; }
+    /// <summary>Tips customers added on Square. They belong to the crew, so they're not sales.</summary>
+    public decimal TipsCollected { get; init; }
     public decimal Commissions { get; init; }
     public decimal FoodCost { get; init; }
     public decimal Wages { get; init; }
@@ -95,7 +99,11 @@ public class BusinessMetrics(IDbContextFactory<AppDbContext> dbf)
             CashSales = sales.Where(s => s.Payment == PaymentMethod.Cash).Sum(s => s.Total),
             SalesTax = Round(tax),
             NetSales = Round(net),
-            CardFees = Round(card * b.CardFeePercent / 100),
+            // Square sales carry their real fee; anything else paid by card gets the estimated rate.
+            CardFees = Round(sales.Sum(s => s.Fee ?? 0)
+                + sales.Where(s => s.Fee is null && s.Payment == PaymentMethod.Card).Sum(s => s.Total) * b.CardFeePercent / 100),
+            ActualFees = sales.Any(s => s.Fee is not null),
+            TipsCollected = sales.Sum(s => s.Tip),
             Commissions = Round(commissions),
             FoodCost = Round(sales.Sum(s => s.Quantity * s.UnitCost)),
             Wages = wages,
