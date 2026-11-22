@@ -9,7 +9,14 @@ public enum ExpenseCategory
 {
     FoodAndDrink = 0, PaperAndSupplies = 1, PropaneAndFuel = 2, EventFees = 3, PermitsAndLicenses = 4, Equipment = 5,
     Repairs = 6, Insurance = 7, Marketing = 8, PaymentFees = 9, Vehicle = 10, Other = 11,
+    /// <summary>Paying the revenue share owed to the venue partner. Settles a cost already counted, so it's not an expense.</summary>
+    RevenueSharePayment = 12,
+    /// <summary>Remitting sales tax. The tax was never income, so it's not an expense.</summary>
+    SalesTaxPayment = 13,
 }
+public enum TaxLevel { State = 0, County = 1, City = 2, Other = 3 }
+/// <summary>What counts as cost of goods in the revenue-share calculation.</summary>
+public enum CogsBasis { Purchases = 0, RecipeCost = 1 }
 public enum InventoryCategory { Food = 0, Drink = 1, PaperAndPackaging = 2, Supplies = 3, Other = 4 }
 /// <summary>Why an inventory count changed. Sale rows are written automatically when sales are recorded from menu items.</summary>
 public enum AdjustmentReason { Purchase = 0, Sale = 1, Used = 2, Waste = 3, Count = 4 }
@@ -39,6 +46,11 @@ public class Business
     public decimal CardFeePercent { get; set; } = 2.6m;
     /// <summary>Employer payroll taxes and other labor burden, in percent of wages.</summary>
     public decimal LaborBurdenPercent { get; set; }
+    /// <summary>Who gets a share of the month's sales (e.g. Eufaula Parks and Recreation). Null when there's no agreement.</summary>
+    public string? RevenueSharePartner { get; set; }
+    /// <summary>Percent of (gross sales − sales tax − cost of goods − labor) owed each month.</summary>
+    public decimal RevenueSharePercent { get; set; }
+    public CogsBasis RevenueShareCogsBasis { get; set; }
     /// <summary>Food cost target in percent of sales. Menu items above it are flagged.</summary>
     public decimal TargetFoodCostPercent { get; set; } = 30;
     public string? Notes { get; set; }
@@ -88,6 +100,10 @@ public class Event
     /// <summary>Percent of sales the organizer takes, if any.</summary>
     public decimal CommissionPercent { get; set; }
     public decimal? SalesGoal { get; set; }
+    /// <summary>Held outside the city limits, so city sales tax doesn't apply.</summary>
+    public bool OutsideCityLimits { get; set; }
+    /// <summary>Not covered by the revenue-share agreement (e.g. a private catering job elsewhere).</summary>
+    public bool ExcludeFromRevenueShare { get; set; }
     public string? Notes { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
@@ -203,8 +219,23 @@ public class Expense
     public Event? Event { get; set; }
     public PaymentMethod Payment { get; set; } = PaymentMethod.Card;
     public int? ReceiptFileId { get; set; }
+    /// <summary>For tax and revenue-share payments: the month (first day) the payment covers.</summary>
+    public DateOnly? ForMonth { get; set; }
     public string? Notes { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>One sales tax the business collects and files: Alabama state, Barbour County, City of Eufaula.</summary>
+public class TaxRate
+{
+    public int Id { get; set; }
+    public int BusinessId { get; set; }
+    public string Name { get; set; } = "";
+    public TaxLevel Level { get; set; }
+    public decimal Percent { get; set; }
+    /// <summary>Where the return is filed, as a reminder (e.g. "My Alabama Taxes").</summary>
+    public string? FiledWith { get; set; }
+    public int SortOrder { get; set; }
 }
 
 public class Employee

@@ -10,7 +10,7 @@ Personal web app for running Donkey Fire Concessions, a concession stand busines
 - The app snapshots the database before pending migrations and daily (`Services/DatabaseBackup.cs`).
 
 ## Layout
-- `Components/Pages/BusinessPages/`: one page per area (Dashboard, Sales, Expenses, Events, EventDetail, Menu, Inventory, Employees, Settings). `Components/Shared/`: Modal, ConfirmDialog, Kpi, BusinessShell, EventSelect, EventForm, PnLTable, FileUploadButton.
+- `Components/Pages/BusinessPages/`: one page per area (Dashboard, Sales, Expenses, Events, EventDetail, TaxesAndShare (`/b/{id}/taxes`), Menu, Inventory, Employees, Settings). `Components/Shared/`: Modal, ConfirmDialog, Kpi, BusinessShell, EventSelect, EventForm, PnLTable, FileUploadButton.
 - `Data/Entities.cs` and `Data/AppDbContext.cs`: the model. Every business-owned table cascades on business delete and is filtered by `BusinessId` in queries.
 - `Services/`: `BusinessMetrics` (all P&L math; `Compute` is pure and tested), `SalesService` (sales use up recipe ingredients and give them back on delete), `InventoryService` (purchase/use/waste/count adjustments), `SquareClient` + `SquareSync` (Square Orders API import; `ImportAsync` is tested with sample JSON) + `SquareAutoSyncService`, `MenuMatcher` (Square names → menu items), `BusinessSeeder` (new business + optional starter menu), `SignInPolicy`, `DatabaseBackup`, `FileStorage`.
 - Pages follow one pattern: `BusinessShell` gives a `BusinessContext` (role, `CanEdit`); lists, modal forms, `ExecuteUpdateAsync` for quick toggles, `ConfirmDialog` before deletes.
@@ -18,6 +18,8 @@ Personal web app for running Donkey Fire Concessions, a concession stand busines
 ## Money rules
 - Money is `decimal`, dates are `DateOnly`. SQLite stores decimals as text, so sums and decimal comparisons happen in memory, not in SQL.
 - Profit is cash-basis: net sales − card fees (Square's actual fee per sale, otherwise the estimated rate) − event commissions − labor (wages + burden) − expenses. Recipe food cost is a ratio, never subtracted (purchases are already expenses). Tips are not a business cost.
+- Sales tax comes from `TaxRate` rows (Alabama 4% + Barbour County 1.5% + City of Eufaula 4%), computed per sale via `TaxPlan`; events with `OutsideCityLimits` skip City-level rates. `Business.SalesTaxPercent` is kept equal to the sum.
+- Revenue share (Eufaula Parks and Recreation, 25%): `Share = pct × max(0, gross − sales tax − COGS − labor)` per calendar month (`BusinessMetrics.ShareOf`, `MonthlyShare`, `MonthsAsync`). COGS basis is a setting (purchases in Food & drink + Paper & supplies, or recipe cost). It is subtracted in net profit. `SalesTaxPayment` and `RevenueSharePayment` expenses settle these and are excluded from expenses; `Expense.ForMonth` says which month a payment covers.
 - Inventory on-hand only changes through `InventoryAdjustment` rows (sales write `Sale` rows linked by `SaleId`), so history stays complete.
 
 ## Status and next steps

@@ -20,6 +20,7 @@
 
     <div class="tabs" role="tablist">
         <button type="button" role="tab" id="tab-details" aria-selected="@(tab == "details")" class="@(tab == "details" ? "active" : "")" @onclick="@(() => tab = "details")"><i class="bi bi-shop"></i> Business</button>
+        <button type="button" role="tab" id="tab-money" aria-selected="@(tab == "money")" class="@(tab == "money" ? "active" : "")" @onclick="@(() => tab = "money")"><i class="bi bi-bank"></i> Taxes &amp; revenue share</button>
         <button type="button" role="tab" id="tab-square" aria-selected="@(tab == "square")" class="@(tab == "square" ? "active" : "")" @onclick="@(() => tab = "square")"><i class="bi bi-square"></i> Square</button>
         <button type="button" role="tab" id="tab-members" aria-selected="@(tab == "members")" class="@(tab == "members" ? "active" : "")" @onclick="@(() => tab = "members")"><i class="bi bi-people"></i> Members &amp; roles</button>
         @if (ctx.IsOwner)
@@ -49,8 +50,6 @@
 
                 <h3 class="settings-sub">Money</h3>
                 <div class="form-grid">
-                    <div><label class="form-label" for="bs-tax">Sales tax rate (%)</label><input id="bs-tax" type="number" min="0" max="30" step="0.25" class="form-control" @bind="form.SalesTaxPercent" /></div>
-                    <div class="d-flex align-items-end"><div class="form-check"><input id="bs-incl" type="checkbox" class="form-check-input" @bind="form.PricesIncludeTax" /><label class="form-check-label" for="bs-incl">Menu prices include sales tax</label></div></div>
                     <div><label class="form-label" for="bs-card">Card processing fee (% of card sales)</label><input id="bs-card" type="number" min="0" max="10" step="0.1" class="form-control" @bind="form.CardFeePercent" />
                         <div class="small-muted mt-1">Set to 0 if you log processor fees as expenses instead.</div></div>
                     <div><label class="form-label" for="bs-burden">Payroll burden (% on top of wages)</label><input id="bs-burden" type="number" min="0" max="50" step="0.5" class="form-control" @bind="form.LaborBurdenPercent" />
@@ -70,6 +69,56 @@
                     <button type="button" class="btn btn-primary" disabled="@(saving || string.IsNullOrWhiteSpace(form.Name))" @onclick="() => SaveDetails(ctx)">
                         <i class="bi bi-check-lg"></i> @(saving ? "Saving…" : "Save settings")
                     </button>
+                </div>
+            }
+        </fieldset>
+    }
+    else if (tab == "money")
+    {
+        <fieldset class="panel" disabled="@(!ctx.CanEdit)" style="max-width:820px">
+            <div class="panel-head"><h2 class="section-title">Sales tax</h2>
+                @if (ctx.CanEdit) { <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="UseEufaula"><i class="bi bi-geo-alt"></i> Use Eufaula, AL rates</button> }
+            </div>
+            <div class="panel-body">
+                <table class="table-bt mb-2">
+                    <thead><tr><th>Tax</th><th>Level</th><th style="width:110px">Rate (%)</th><th>Filed with</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var r in rates)
+                        {
+                            <tr>
+                                <td><input class="form-control form-control-sm" aria-label="Tax name" @bind="r.Name" placeholder="e.g. Barbour County" /></td>
+                                <td><select class="form-select form-select-sm" aria-label="Level" @bind="r.Level">@foreach (var l in Enum.GetValues<TaxLevel>()) { <option value="@l">@l</option> }</select></td>
+                                <td><input class="form-control form-control-sm text-end" type="number" min="0" max="20" step="0.25" aria-label="Rate" @bind="r.Percent" /></td>
+                                <td><input class="form-control form-control-sm" aria-label="Filed with" @bind="r.FiledWith" /></td>
+                                <td>@if (ctx.CanEdit) { <button type="button" class="btn btn-sm btn-outline-secondary" aria-label="Remove tax" @onclick="() => rates.Remove(r)"><i class="bi bi-x-lg"></i></button> }</td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot><tr><td colspan="2">Combined</td><td class="r">@Fmt.Qty(rates.Sum(r => r.Percent))%</td><td colspan="2"></td></tr></tfoot>
+                </table>
+                @if (ctx.CanEdit) { <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => rates.Add(new TaxRate { BusinessId = BusinessId, Level = TaxLevel.Other, SortOrder = rates.Count })"><i class="bi bi-plus-lg"></i> Add a tax</button> }
+                <div class="form-check mt-3"><input id="bs-incl" type="checkbox" class="form-check-input" @bind="form.PricesIncludeTax" /><label class="form-check-label" for="bs-incl">Menu prices include sales tax (the tax is worked out of each sale, not added on top)</label></div>
+                <p class="small-muted mt-2 mb-0">Events can be marked "outside city limits" so their sales skip the City-level taxes. Rates change: check the Alabama Department of Revenue rate lookup before filing.</p>
+            </div>
+
+            <div class="panel-head border-top"><h2 class="section-title">Revenue share</h2></div>
+            <div class="panel-body">
+                <div class="form-grid">
+                    <div class="full"><label class="form-label" for="rs-partner">Paid to</label><input id="rs-partner" class="form-control" @bind="form.RevenueSharePartner" placeholder="e.g. Eufaula Parks and Recreation (leave blank if none)" /></div>
+                    <div><label class="form-label" for="rs-pct">Share (%)</label><input id="rs-pct" type="number" min="0" max="100" step="0.5" class="form-control" @bind="form.RevenueSharePercent" /></div>
+                    <div><label class="form-label" for="rs-cogs">Cost of goods means</label>
+                        <select id="rs-cogs" class="form-select" @bind="form.RevenueShareCogsBasis">@foreach (var c in Enum.GetValues<CogsBasis>()) { <option value="@c">@Fmt.Label(c)</option> }</select></div>
+                </div>
+                <p class="small-muted mt-3 mb-0">
+                    Owed each month: the share % of gross sales minus sales tax, cost of goods and employee costs (wages plus payroll burden), never below zero.
+                    "Purchases" counts Food &amp; drink and Paper &amp; supplies expenses dated that month; "Recipe cost" counts the recipe cost of what was sold.
+                </p>
+            </div>
+            @if (ctx.CanEdit)
+            {
+                <div class="bt-modal-foot">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="ResetMoney">Undo changes</button>
+                    <button type="button" class="btn btn-primary" disabled="@saving" @onclick="() => SaveMoney(ctx)"><i class="bi bi-check-lg"></i> @(saving ? "Saving…" : "Save")</button>
                 </div>
             }
         </fieldset>
@@ -284,15 +333,59 @@
     {
         squareLocationId = c.Business.SquareLocationId ?? "";
         squareFrom = c.Business.SquareSyncFrom ?? DateOnly.FromDateTime(DateTime.Today.AddDays(-30));
-        if (TabQuery is "members" or "details" or "square" || (TabQuery == "danger" && c.IsOwner)) tab = TabQuery;
+        if (TabQuery is "members" or "details" or "square" or "money" || (TabQuery == "danger" && c.IsOwner)) tab = TabQuery;
         await ResetFormAsync();
         await LoadMembers();
     }
+
+    private List<TaxRate> rates = new();
 
     private async Task ResetFormAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         form = await db.Businesses.AsNoTracking().FirstAsync(x => x.Id == BusinessId);
+        rates = await db.TaxRates.AsNoTracking().Where(r => r.BusinessId == BusinessId).OrderBy(r => r.SortOrder).ThenBy(r => r.Level).ToListAsync();
+        if (rates.Count == 0 && form.SalesTaxPercent > 0)
+            rates.Add(new TaxRate { BusinessId = BusinessId, Name = "Sales tax", Level = TaxLevel.Other, Percent = form.SalesTaxPercent });
+    }
+
+    private async Task ResetMoney()
+    {
+        await ResetFormAsync();
+        Toasts.Show("Changes undone.");
+    }
+
+    private void UseEufaula() => rates = BusinessSeeder.EufaulaRates(BusinessId).ToList();
+
+    private async Task SaveMoney(BusinessContext c)
+    {
+        if (rates.Any(r => r.Percent < 0 || string.IsNullOrWhiteSpace(r.Name)) || form.RevenueSharePercent is < 0 or > 100)
+        {
+            Toasts.Error("Every tax needs a name and a rate of 0 or more, and the share must be between 0 and 100%.");
+            return;
+        }
+        saving = true;
+        try
+        {
+            await Access.RequireAsync(BusinessId, BusinessRole.Editor);
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var b = await db.Businesses.FirstAsync(x => x.Id == BusinessId);
+            await db.TaxRates.Where(r => r.BusinessId == BusinessId).ExecuteDeleteAsync();
+            var order = 0;
+            foreach (var r in rates)
+                db.TaxRates.Add(new TaxRate { BusinessId = BusinessId, Name = r.Name.Trim(), Level = r.Level, Percent = r.Percent, SortOrder = order++,
+                    FiledWith = string.IsNullOrWhiteSpace(r.FiledWith) ? null : r.FiledWith.Trim() });
+            b.SalesTaxPercent = rates.Sum(r => r.Percent);
+            b.PricesIncludeTax = form.PricesIncludeTax;
+            b.RevenueSharePartner = string.IsNullOrWhiteSpace(form.RevenueSharePartner) ? null : form.RevenueSharePartner.Trim();
+            b.RevenueSharePercent = b.RevenueSharePartner is null ? 0 : form.RevenueSharePercent;
+            b.RevenueShareCogsBasis = form.RevenueShareCogsBasis;
+            await db.SaveChangesAsync();
+            c.Business = b;
+            Toasts.Show("Taxes and revenue share saved.");
+            if (c.Reload is not null) await c.Reload();
+        }
+        finally { saving = false; }
     }
 
     private async Task ResetForm()
@@ -318,8 +411,6 @@
             b.Name = form.Name.Trim();
             b.City = string.IsNullOrWhiteSpace(form.City) ? null : form.City.Trim();
             b.State = string.IsNullOrWhiteSpace(form.State) ? null : form.State.Trim();
-            b.SalesTaxPercent = form.SalesTaxPercent;
-            b.PricesIncludeTax = form.PricesIncludeTax;
             b.CardFeePercent = form.CardFeePercent;
             b.LaborBurdenPercent = form.LaborBurdenPercent;
             b.TargetFoodCostPercent = form.TargetFoodCostPercent;

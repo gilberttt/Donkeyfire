@@ -6,7 +6,18 @@ namespace DonkeyFire.Web.Services;
 /// <summary>Creates a business with its first owner and, optionally, a starter concession menu to edit.</summary>
 public class BusinessSeeder(IDbContextFactory<AppDbContext> dbf)
 {
-    public async Task<Business> CreateBusinessAsync(Business business, int ownerUserId, bool starterMenu)
+    /// <summary>
+    /// Sales tax inside Eufaula city limits: 4% Alabama + 1.5% Barbour County + 4% City of Eufaula (9.5%), as of Nov 2026.
+    /// All three are filed through My Alabama Taxes. Confirm with the Alabama Department of Revenue rate lookup if rates change.
+    /// </summary>
+    public static IEnumerable<TaxRate> EufaulaRates(int businessId) =>
+    [
+        new() { BusinessId = businessId, Name = "Alabama state", Level = TaxLevel.State, Percent = 4m, FiledWith = "My Alabama Taxes", SortOrder = 0 },
+        new() { BusinessId = businessId, Name = "Barbour County", Level = TaxLevel.County, Percent = 1.5m, FiledWith = "My Alabama Taxes", SortOrder = 1 },
+        new() { BusinessId = businessId, Name = "City of Eufaula", Level = TaxLevel.City, Percent = 4m, FiledWith = "My Alabama Taxes", SortOrder = 2 },
+    ];
+
+    public async Task<Business> CreateBusinessAsync(Business business, int ownerUserId, bool starterMenu, bool eufaulaTaxes = false)
     {
         await using var db = await dbf.CreateDbContextAsync();
         var owner = await db.Users.AsNoTracking().FirstAsync(u => u.Id == ownerUserId);
@@ -17,6 +28,11 @@ public class BusinessSeeder(IDbContextFactory<AppDbContext> dbf)
             BusinessId = business.Id, UserId = owner.Id, Email = owner.Email.Trim().ToLowerInvariant(), Role = BusinessRole.Owner, AcceptedAt = DateTime.UtcNow,
         });
         if (starterMenu) AddStarterMenu(db, business.Id);
+        if (eufaulaTaxes)
+        {
+            db.TaxRates.AddRange(EufaulaRates(business.Id));
+            business.SalesTaxPercent = 9.5m;
+        }
         await db.SaveChangesAsync();
         return business;
     }

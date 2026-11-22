@@ -1,0 +1,247 @@
+@page "/b/{BusinessId:int}/taxes"
+@inject BusinessMetrics Metrics
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ToastService Toasts
+@inject IJSRuntime JS
+
+<PageTitle>Taxes &amp; @PartnerShort · Donkey Fire</PageTitle>
+
+<BusinessShell BusinessId="BusinessId" OnLoaded="Load" Context="ctx">
+    <div class="page-head">
+        <div>
+            <div class="eyebrow">Money</div>
+            <h1 class="display-title">Taxes &amp; @PartnerShort</h1>
+        </div>
+        <div class="actions">
+            <button class="btn btn-outline-secondary" aria-label="Previous month" @onclick="() => Move(-1)"><i class="bi bi-chevron-left"></i></button>
+            <span class="fw-semibold px-1" style="min-width:130px;text-align:center">@month.ToString("MMMM yyyy")</span>
+            <button class="btn btn-outline-secondary" aria-label="Next month" disabled="@(month >= ThisMonth)" @onclick="() => Move(1)"><i class="bi bi-chevron-right"></i></button>
+            <button class="btn btn-outline-secondary" @onclick="ExportCsv"><i class="bi bi-download"></i> CSV</button>
+        </div>
+    </div>
+
+    @if (current is null)
+    {
+        <div class="page-loading">Loading…</div>
+    }
+    else
+    {
+        var p = current.PnL;
+        var share = p.Share;
+        @if (month == ThisMonth)
+        {
+            <p class="small-muted mb-3"><i class="bi bi-broadcast"></i> Live: updates as sales, expenses and shifts are recorded. The month isn't final until it ends.</p>
+        }
+        <div class="kpis mb-3">
+            <Kpi Label="Gross sales" Icon="bi-cash-stack" Value="@Fmt.Money2(p.GrossSales)" />
+            <Kpi Label="Sales tax owed" Icon="bi-bank" Value="@Fmt.Money2(p.SalesTax)" Sub="@($"Due {Fmt.Date(current.TaxDueDate)}")" />
+            @if (share is not null) { <Kpi Label="@($"{PartnerShort} owed")" Icon="bi-tree" Value="@Fmt.Money2(share.Owed)" Sub="@($"{Fmt.Qty(share.Percent)}% of {Fmt.Money2(Math.Max(0, share.Base))}")" /> }
+            <Kpi Label="Still to pay" Icon="bi-hourglass-split" Value="@Fmt.Money2(Math.Max(0, current.SalesTaxDue) + Math.Max(0, current.ShareDue))" ValueClass="@(current.SalesTaxDue > 0.005m || current.ShareDue > 0.005m ? "num-risk" : "num-under")" />
+        </div>
+
+        <div class="grid-2">
+            <div class="panel">
+                <div class="panel-head">
+                    <h2 class="section-title">Sales tax</h2>
+                    <StatusPill Kind="@StatusKind(p.SalesTax, current.SalesTaxPaid)" Text="@StatusText(p.SalesTax, current.SalesTaxPaid)" />
+                </div>
+                @if (p.Taxes.Count == 0)
+                {
+                    <div class="empty py-3"><i class="bi bi-bank"></i>No sales tax rates set. <a href="@($"{ctx.Base}/settings?tab=money")">Add them in Settings</a>.</div>
+                }
+                else
+                {
+                    <table class="table-bt pnl-table">
+                        <thead><tr><th>Jurisdiction</th><th class="r">Rate</th><th>Amount</th></tr></thead>
+                        <tbody>
+                            @foreach (var t in p.Taxes)
+                            {
+                                <tr><td>@t.Name<div class="small-muted">@Fmt.Label(t.Level)@(t.FiledWith is null ? "" : $" · {t.FiledWith}")</div></td><td class="r">@Fmt.Qty(t.Percent)%</td><td>@Fmt.Money2(t.Amount)</td></tr>
+                            }
+                            <tr class="total"><td>Total owed</td><td class="r">@Fmt.Qty(p.Taxes.Sum(t => t.Percent))%</td><td>@Fmt.Money2(p.SalesTax)</td></tr>
+                            <tr class="sub"><td>Paid for @month.ToString("MMMM")</td><td></td><td>−@Fmt.Money2(current.SalesTaxPaid)</td></tr>
+                            <tr class="total"><td>Balance</td><td></td><td class="@(current.SalesTaxDue > 0.005m ? "num-risk" : "num-under")">@Fmt.Money2(current.SalesTaxDue)</td></tr>
+                        </tbody>
+                    </table>
+                    <div class="panel-body small-muted border-top">
+                        Taxable sales @Fmt.Money2(p.GrossSales)@(ctx.Business.PricesIncludeTax ? " (tax included in prices, so the tax is the part of each sale above its pre-tax price)" : " (tax added on top of prices)").
+                        Sales at events marked outside city limits skip city tax. Return due @Fmt.Date(current.TaxDueDate).
+                    </div>
+                    @if (ctx.CanEdit && current.SalesTaxDue > 0.005m)
+                    {
+                        <div class="bt-modal-foot"><button class="btn btn-primary" @onclick="() => StartPayment(ExpenseCategory.SalesTaxPayment, current.SalesTaxDue)"><i class="bi bi-check2-circle"></i> Record tax payment</button></div>
+                    }
+                }
+            </div>
+
+            <div class="panel">
+                <div class="panel-head">
+                    <h2 class="section-title">@(share?.Partner ?? "Revenue share")</h2>
+                    @if (share is not null) { <StatusPill Kind="@StatusKind(share.Owed, current.SharePaid)" Text="@StatusText(share.Owed, current.SharePaid)" /> }
+                </div>
+                @if (share is null)
+                {
+                    <div class="empty py-3"><i class="bi bi-tree"></i>No revenue-share agreement set. <a href="@($"{ctx.Base}/settings?tab=money")">Set it up in Settings</a>.</div>
+                }
+                else
+                {
+                    <table class="table-bt pnl-table">
+                        <tbody>
+                            <tr><td>Gross sales</td><td>@Fmt.Money2(share.GrossSales)</td></tr>
+                            <tr class="sub"><td>Less sales tax</td><td>−@Fmt.Money2(share.SalesTax)</td></tr>
+                            <tr class="sub"><td>Less cost of goods<div class="small-muted">@Fmt.Label(share.CogsBasis)</div></td><td>−@Fmt.Money2(share.Cogs)</td></tr>
+                            <tr class="sub"><td>Less employee costs<div class="small-muted">Wages@(ctx.Business.LaborBurdenPercent > 0 ? $" + {Fmt.Qty(ctx.Business.LaborBurdenPercent)}% payroll burden" : "")</div></td><td>−@Fmt.Money2(share.Labor)</td></tr>
+                            <tr><td><strong>Amount the share is figured on</strong></td><td class="@(share.Base < 0 ? "num-over" : "")"><strong>@Fmt.Money2(share.Base)</strong></td></tr>
+                            <tr class="total"><td>@share.Partner's share (@Fmt.Qty(share.Percent)%)</td><td>@Fmt.Money2(share.Owed)</td></tr>
+                            <tr class="sub"><td>Paid for @month.ToString("MMMM")</td><td>−@Fmt.Money2(current.SharePaid)</td></tr>
+                            <tr class="total"><td>Balance</td><td class="@(current.ShareDue > 0.005m ? "num-risk" : "num-under")">@Fmt.Money2(current.ShareDue)</td></tr>
+                        </tbody>
+                    </table>
+                    <div class="panel-body small-muted border-top">
+                        @if (share.Base < 0) { <span>Costs were more than sales after tax this month, so nothing is owed. </span> }
+                        Sales, purchases and shifts tied to an event marked "not covered by the agreement" are left out.
+                    </div>
+                    @if (ctx.CanEdit && current.ShareDue > 0.005m)
+                    {
+                        <div class="bt-modal-foot"><button class="btn btn-primary" @onclick="() => StartPayment(ExpenseCategory.RevenueSharePayment, current.ShareDue)"><i class="bi bi-check2-circle"></i> Record @PartnerShort payment</button></div>
+                    }
+                }
+            </div>
+        </div>
+
+        <div class="panel mt-3">
+            <div class="panel-head"><h2 class="section-title">Last 12 months</h2></div>
+            <div class="table-wrap">
+                <table class="table-bt">
+                    <thead><tr><th>Month</th><th class="r">Gross sales</th><th class="r">Tax owed</th><th class="r">Tax paid</th>@if (hasShare) { <th class="r">@PartnerShort owed</th><th class="r">@PartnerShort paid</th> }<th>Status</th></tr></thead>
+                    <tbody>
+                        @foreach (var m in history.Where(h => h.PnL.GrossSales != 0 || h.SalesTaxPaid != 0 || h.SharePaid != 0 || h.Month == ThisMonth))
+                        {
+                            var due = Math.Max(0, m.SalesTaxDue) + Math.Max(0, m.ShareDue);
+                            <tr class="@(m.Month == month ? "fw-semibold" : "")" style="cursor:pointer" @onclick="() => Go(m.Month)">
+                                <td>@m.Month.ToString("MMM yyyy")</td>
+                                <td class="r">@Fmt.Money2(m.PnL.GrossSales)</td><td class="r">@Fmt.Money2(m.PnL.SalesTax)</td><td class="r">@Fmt.Money2(m.SalesTaxPaid)</td>
+                                @if (hasShare) { <td class="r">@Fmt.Money2(m.PnL.ShareOwed)</td><td class="r">@Fmt.Money2(m.SharePaid)</td> }
+                                <td>@if (m.Month == ThisMonth) { <StatusPill Kind="active" Text="In progress" /> } else if (due > 0.005m) { <StatusPill Kind="blocked" Text="@($"{Fmt.Money2(due)} due")" /> } else { <StatusPill Kind="done" Text="Paid" /> }</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+
+    <Modal @bind-Open="paying" Title="@(payKind == ExpenseCategory.SalesTaxPayment ? "Record sales tax payment" : $"Record {PartnerShort} payment")" Icon="bi-check2-circle">
+        <ChildContent>
+            <div class="form-grid">
+                <div><label class="form-label" for="pay-amt">Amount ($)</label><input id="pay-amt" type="number" min="0" step="0.01" class="form-control" @bind="payAmount" /></div>
+                <div><label class="form-label" for="pay-date">Paid on</label><input id="pay-date" type="date" class="form-control" @bind="payDate" /></div>
+                <div><label class="form-label" for="pay-for">For the month of</label><input id="pay-for" type="month" class="form-control" value="@payFor.ToString("yyyy-MM")" @onchange="SetPayFor" /></div>
+                <div><label class="form-label" for="pay-how">Paid with</label>
+                    <select id="pay-how" class="form-select" @bind="payMethod">@foreach (var m in Enum.GetValues<PaymentMethod>()) { <option value="@m">@m</option> }</select></div>
+                <div class="full"><label class="form-label" for="pay-note">Note</label><input id="pay-note" class="form-control" @bind="payNote" placeholder="Confirmation or check number" /></div>
+            </div>
+            <p class="small-muted mt-3 mb-0">Saved under Expenses as a payment. It settles what's owed and isn't counted again as a cost.</p>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-outline-secondary" @onclick="() => paying = false">Cancel</button>
+            <button class="btn btn-primary" disabled="@(payAmount is null or <= 0)" @onclick="SavePayment"><i class="bi bi-check-lg"></i> Save payment</button>
+        </Footer>
+    </Modal>
+</BusinessShell>
+
+@code {
+    [Parameter] public int BusinessId { get; set; }
+    [SupplyParameterFromQuery(Name = "m")] public string? MonthQuery { get; set; }
+
+    private BusinessContext ctx = default!;
+    private DateOnly month = ThisMonth;
+    private BusinessMetrics.MonthObligations? current;
+    private List<BusinessMetrics.MonthObligations> history = new();
+    private bool hasShare;
+    private bool paying;
+    private ExpenseCategory payKind;
+    private decimal? payAmount;
+    private DateOnly payDate = DateOnly.FromDateTime(DateTime.Today);
+    private DateOnly payFor;
+    private PaymentMethod payMethod = PaymentMethod.Card;
+    private string? payNote;
+
+    private static DateOnly ThisMonth => BusinessMetrics.MonthOf(DateOnly.FromDateTime(DateTime.Today));
+    private string PartnerShort => Short(ctx?.Business.RevenueSharePartner) ?? "Revenue share";
+
+    /// <summary>"Eufaula Parks and Recreation" → "EPR"; short names stay as they are.</summary>
+    public static string? Short(string? partner)
+    {
+        if (string.IsNullOrWhiteSpace(partner)) return null;
+        var words = partner.Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(w => !w.Equals("and", StringComparison.OrdinalIgnoreCase) && !w.Equals("of", StringComparison.OrdinalIgnoreCase)).ToList();
+        return partner.Length <= 12 || words.Count < 2 ? partner.Trim() : string.Concat(words.Select(w => char.ToUpperInvariant(w[0])));
+    }
+
+    private static string StatusKind(decimal owed, decimal paid) => owed <= 0.005m ? "pending" : paid + 0.005m >= owed ? "done" : paid > 0 ? "active" : "blocked";
+    private static string StatusText(decimal owed, decimal paid) => owed <= 0.005m ? "Nothing owed" : paid + 0.005m >= owed ? "Paid" : paid > 0 ? "Part paid" : "Unpaid";
+
+    private async Task Load(BusinessContext c)
+    {
+        ctx = c;
+        if (DateOnly.TryParseExact(MonthQuery + "-01", "yyyy-MM-dd", out var q) && q <= ThisMonth) month = q;
+        await Refresh();
+    }
+
+    private async Task Refresh()
+    {
+        var first = new[] { month, ThisMonth.AddMonths(-11) }.Min();
+        history = await Metrics.MonthsAsync(ctx.Business, first, ThisMonth);
+        current = history.First(h => h.Month == month);
+        hasShare = history.Any(h => h.PnL.Share is not null);
+        history = history.Where(h => h.Month >= ThisMonth.AddMonths(-11) || h.Month == month).ToList();
+    }
+
+    private async Task Move(int by) => await Go(month.AddMonths(by));
+
+    private async Task Go(DateOnly m)
+    {
+        if (m > ThisMonth) return;
+        month = m;
+        await Refresh();
+    }
+
+    private void StartPayment(ExpenseCategory kind, decimal amount)
+    {
+        payKind = kind;
+        payAmount = Math.Round(amount, 2);
+        payDate = DateOnly.FromDateTime(DateTime.Today);
+        payFor = month;
+        payNote = null;
+        paying = true;
+    }
+
+    private void SetPayFor(ChangeEventArgs e)
+    {
+        if (DateOnly.TryParseExact(e.Value + "-01", "yyyy-MM-dd", out var d)) payFor = d;
+    }
+
+    private async Task SavePayment()
+    {
+        if (payAmount is not { } amt || amt <= 0) return;
+        var what = payKind == ExpenseCategory.SalesTaxPayment ? "Sales tax" : $"{ctx.Business.RevenueSharePartner} share";
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.Expenses.Add(new Expense
+        {
+            BusinessId = BusinessId, Category = payKind, Amount = amt, Date = payDate, ForMonth = payFor, Payment = payMethod,
+            Description = $"{what} for {payFor:MMMM yyyy}", Vendor = payKind == ExpenseCategory.SalesTaxPayment ? "Alabama Department of Revenue" : ctx.Business.RevenueSharePartner,
+            Notes = string.IsNullOrWhiteSpace(payNote) ? null : payNote.Trim(),
+        });
+        await db.SaveChangesAsync();
+        paying = false;
+        Toasts.Show($"Recorded {Fmt.Money2(amt)}.");
+        await Refresh();
+    }
+
+    private async Task ExportCsv()
+    {
+        var csv = Csv.Build(["Month", "Gross sales", "Sales tax owed", "Sales tax paid", "Share base", "Share owed", "Share paid"],
+            history.Select(h => new object?[] { h.Month.ToString("yyyy-MM"), h.PnL.GrossSales, h.PnL.SalesTax, h.SalesTaxPaid, h.PnL.Share?.Base, h.PnL.ShareOwed, h.SharePaid }));
+        await JS.InvokeVoidAsync("bt.download", $"taxes-and-share-{DateTime.Today:yyyyMMdd}.csv", csv);
+    }
+}

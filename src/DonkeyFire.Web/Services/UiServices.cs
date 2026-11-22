@@ -69,6 +69,10 @@ public static class Fmt
         ExpenseCategory.EventFees => "Event & booth fees",
         ExpenseCategory.PermitsAndLicenses => "Permits & licenses",
         ExpenseCategory.PaymentFees => "Card & payment fees",
+        ExpenseCategory.RevenueSharePayment => "Revenue share payment",
+        ExpenseCategory.SalesTaxPayment => "Sales tax payment",
+        CogsBasis.Purchases => "Food, drink & paper purchases that month",
+        CogsBasis.RecipeCost => "Recipe cost of items sold",
         InventoryCategory.PaperAndPackaging => "Paper & packaging",
         _ => System.Text.RegularExpressions.Regex.Replace(e.ToString(), "(?<=[a-z])([A-Z])", " $1"),
     };

@@ -14,6 +14,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<InventoryAdjustment> InventoryAdjustments => Set<InventoryAdjustment>();
     public DbSet<Sale> Sales => Set<Sale>();
     public DbSet<Expense> Expenses => Set<Expense>();
+    public DbSet<TaxRate> TaxRates => Set<TaxRate>();
     public DbSet<Employee> Employees => Set<Employee>();
     public DbSet<Shift> Shifts => Set<Shift>();
     public DbSet<StoredFile> Files => Set<StoredFile>();
@@ -54,7 +55,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
         // Every business-owned table cascades when the business is deleted.
         foreach (var type in new[] { typeof(Event), typeof(MenuItem), typeof(InventoryItem), typeof(InventoryAdjustment), typeof(Sale),
-                     typeof(Expense), typeof(Employee), typeof(Shift), typeof(StoredFile) })
+                     typeof(Expense), typeof(TaxRate), typeof(Employee), typeof(Shift), typeof(StoredFile) })
         {
             b.Entity(type).HasOne(typeof(Business)).WithMany().HasForeignKey("BusinessId").OnDelete(DeleteBehavior.Cascade);
         }

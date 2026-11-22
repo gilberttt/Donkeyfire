@@ -17,6 +17,8 @@
             <div><label class="form-label" for="ev-fee">Booth / space fee ($)</label><input id="ev-fee" type="number" min="0" step="1" class="form-control" @bind="form.BoothFee" /></div>
             <div><label class="form-label" for="ev-comm">Organizer's cut of sales (%)</label><input id="ev-comm" type="number" min="0" max="100" step="0.5" class="form-control" @bind="form.CommissionPercent" /></div>
             <div><label class="form-label" for="ev-goal">Sales goal ($)</label><input id="ev-goal" type="number" min="0" step="50" class="form-control" @bind="form.SalesGoal" /></div>
+            <div class="full form-check ms-1"><input id="ev-outside" type="checkbox" class="form-check-input" @bind="form.OutsideCityLimits" /><label class="form-check-label" for="ev-outside">Outside city limits (no city sales tax)</label></div>
+            <div class="full form-check ms-1"><input id="ev-noshare" type="checkbox" class="form-check-input" @bind="form.ExcludeFromRevenueShare" /><label class="form-check-label" for="ev-noshare">Not covered by the revenue-share agreement (e.g. private catering)</label></div>
             <div class="full"><label class="form-label" for="ev-notes">Notes</label><textarea id="ev-notes" class="form-control" rows="3" @bind="form.Notes" placeholder="Load-in time, power, parking, what sold out last year"></textarea></div>
         </div>
         <p class="small-muted mt-3 mb-0">The booth fee here is the agreed amount. When you pay it, record it as an expense (the event page has a button for that) so it counts in profit once.</p>
@@ -43,7 +45,7 @@
         form = new Event
         {
             Id = e.Id, BusinessId = BusinessId, Name = e.Name, Kind = e.Kind, Status = e.Status, StartDate = e.StartDate, EndDate = e.EndDate,
-            Location = e.Location, Contact = e.Contact, BoothFee = e.BoothFee, CommissionPercent = e.CommissionPercent, SalesGoal = e.SalesGoal,
+            Location = e.Location, Contact = e.Contact, BoothFee = e.BoothFee, CommissionPercent = e.CommissionPercent, SalesGoal = e.SalesGoal, OutsideCityLimits = e.OutsideCityLimits, ExcludeFromRevenueShare = e.ExcludeFromRevenueShare,
             Notes = e.Notes, CreatedAt = e.CreatedAt,
         };
         open = true;

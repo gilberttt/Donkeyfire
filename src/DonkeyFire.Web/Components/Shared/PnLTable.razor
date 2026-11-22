@@ -2,21 +2,29 @@
 <table class="table-bt pnl-table">
     <tbody>
         <tr><td>Gross sales</td><td>@Fmt.Money2(P.GrossSales)</td></tr>
-        @if (B.SalesTaxPercent > 0)
+        @if (P.SalesTax != 0)
         {
-            <tr class="sub"><td>Sales tax @(B.PricesIncludeTax ? "included" : "collected on top") (@Fmt.Qty(B.SalesTaxPercent)%)</td><td>@(B.PricesIncludeTax ? "−" : "")@Fmt.Money2(P.SalesTax)</td></tr>
+            <tr class="sub"><td>Sales tax @(B.PricesIncludeTax ? "included in prices" : "collected on top")</td><td>@(B.PricesIncludeTax ? "−" : "")@Fmt.Money2(P.SalesTax)</td></tr>
         }
         <tr><td><strong>Net sales</strong></td><td><strong>@Fmt.Money2(P.NetSales)</strong></td></tr>
         @if (P.CardFees != 0) { <tr class="sub"><td>Card fees (@(P.ActualFees ? "from Square" : $"est. {Fmt.Qty(B.CardFeePercent)}%") on @Fmt.Money(P.CardSales) card sales)</td><td>−@Fmt.Money2(P.CardFees)</td></tr> }
         @if (P.Commissions != 0) { <tr class="sub"><td>Event commissions</td><td>−@Fmt.Money2(P.Commissions)</td></tr> }
         <tr><td>Labor (@Fmt.Hours(P.LaborHours))</td><td>−@Fmt.Money2(P.Labor)</td></tr>
         @if (P.LaborBurden != 0) { <tr class="sub"><td>includes payroll burden @Fmt.Qty(B.LaborBurdenPercent)%</td><td>@Fmt.Money2(P.LaborBurden)</td></tr> }
+        @if (P.Share is { } share)
+        {
+            <tr><td>@share.Partner (@Fmt.Qty(share.Percent)% of @Fmt.Money(Math.Max(0, share.Base)))</td><td>−@Fmt.Money2(share.Owed)</td></tr>
+        }
         <tr><td>Expenses</td><td>−@Fmt.Money2(P.Expenses)</td></tr>
         @foreach (var (cat, amt) in P.ExpensesByCategory)
         {
             <tr class="sub"><td>@Fmt.Label(cat)</td><td>@Fmt.Money2(amt)</td></tr>
         }
         @if (P.TipsCollected != 0) { <tr class="sub"><td>Tips collected on Square (for the crew, not sales)</td><td>@Fmt.Money2(P.TipsCollected)</td></tr> }
+        @if (P.SalesTaxPaid != 0 || P.RevenueSharePaid != 0)
+        {
+            <tr class="sub"><td>Tax and share payments made (settle the lines above, not counted again)</td><td>@Fmt.Money2(P.SalesTaxPaid + P.RevenueSharePaid)</td></tr>
+        }
         <tr class="total"><td>Net profit</td><td class="@Fmt.ProfitClass(P.NetProfit)">@Fmt.Money2(P.NetProfit)</td></tr>
     </tbody>
 </table>

@@ -17,6 +17,7 @@
                     <NavLink class="nav-link-bt" href="@($"{b}/sales")"><i class="bi bi-cash-coin"></i>Sales</NavLink>
                     <NavLink class="nav-link-bt" href="@($"{b}/expenses")"><i class="bi bi-receipt"></i>Expenses</NavLink>
                     <NavLink class="nav-link-bt" href="@($"{b}/events")"><i class="bi bi-calendar-event"></i>Events</NavLink>
+                    <NavLink class="nav-link-bt" href="@($"{b}/taxes")"><i class="bi bi-bank"></i>Taxes@(Business.RevenueSharePartner is null ? "" : $" & {DonkeyFire.Web.Components.Pages.BusinessPages.TaxesAndShare.Short(Business.RevenueSharePartner)}")</NavLink>
                 </div>
                 <div class="nav-group">
                     <div class="nav-group-label">Kitchen</div>

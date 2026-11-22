@@ -82,6 +82,15 @@ namespace DonkeyFire.Web.Data.Migrations
                     b.Property<bool>("PricesIncludeTax")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("RevenueShareCogsBasis")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RevenueSharePartner")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("RevenueSharePercent")
+                        .HasColumnType("TEXT");
+
                     b.Property<decimal>("SalesTaxPercent")
                         .HasColumnType("TEXT");
 
@@ -210,6 +219,9 @@ namespace DonkeyFire.Web.Data.Migrations
                     b.Property<DateOnly?>("EndDate")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("ExcludeFromRevenueShare")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("Kind")
                         .HasColumnType("INTEGER");
 
@@ -222,6 +234,9 @@ namespace DonkeyFire.Web.Data.Migrations
 
                     b.Property<string>("Notes")
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("OutsideCityLimits")
+                        .HasColumnType("INTEGER");
 
                     b.Property<decimal?>("SalesGoal")
                         .HasColumnType("TEXT");
@@ -266,6 +281,9 @@ namespace DonkeyFire.Web.Data.Migrations
 
                     b.Property<int?>("EventId")
                         .HasColumnType("INTEGER");
+
+                    b.Property<DateOnly?>("ForMonth")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Notes")
                         .HasColumnType("TEXT");
@@ -593,6 +611,38 @@ namespace DonkeyFire.Web.Data.Migrations
                     b.ToTable("Files");
                 });
 
+            modelBuilder.Entity("DonkeyFire.Web.Data.TaxRate", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BusinessId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("FiledWith")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Level")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Percent")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BusinessId");
+
+                    b.ToTable("TaxRates");
+                });
+
             modelBuilder.Entity("DonkeyFire.Web.Data.BusinessMember", b =>
                 {
                     b.HasOne("DonkeyFire.Web.Data.Business", "Business")
@@ -747,6 +797,15 @@ namespace DonkeyFire.Web.Data.Migrations
                 });
 
             modelBuilder.Entity("DonkeyFire.Web.Data.StoredFile", b =>
+                {
+                    b.HasOne("DonkeyFire.Web.Data.Business", null)
+                        .WithMany()
+                        .HasForeignKey("BusinessId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("DonkeyFire.Web.Data.TaxRate", b =>
                 {
                     b.HasOne("DonkeyFire.Web.Data.Business", null)
                         .WithMany()

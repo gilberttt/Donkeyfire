@@ -13,6 +13,7 @@ A web app for running a concession business: sales by event, expenses with recei
 | **Menu & recipes** | Price, category, and a recipe built from inventory items, so each item shows its cost, food cost % and margin against your target. It suggests the price that hits the target. Items without a recipe can take a manual cost. Hide items to keep them off the ring-up screen. |
 | **Inventory** | Items with unit, cost per unit, on hand, reorder level, supplier and storage location. Add stock (updates the unit cost), use up or waste, count to true up, and full history per item. Low-stock filter, a copyable shopping list grouped by supplier, CSV export. |
 | **Employees & shifts** | Crew with hourly rates. Log one shift for several people at once, with hours, flat pay, tips paid out and an optional event. Shifts keep the rate they were logged at. A "To pay" tab totals what each person is owed and marks them paid. |
+| **Taxes & EPR** | Live for the current month and any past one. **Sales tax** is split into Alabama state (4%), Barbour County (1.5%) and City of Eufaula (4%), with the return due date (the 20th of the next month). Events outside the city limits skip city tax. **Eufaula Parks and Recreation** gets 25% of gross sales minus sales tax, cost of goods and employee costs, worked out month by month and never below zero. Record payments for either and see what's still owed for each of the last 12 months. |
 | **Square** | Pulls completed Square orders into Sales: each item (matched to the menu by name, so it uses up inventory), cash or card, tips, and Square's actual processing fee. Refunds come in as negative sales and put ingredients back. Items Square calls something else show up in a "not on your menu" panel with a one-click link. Sync from the Sales page, or on a timer. |
 | **Settings** | Sales tax rate (and whether prices include it), card fee %, payroll burden %, food cost target. Members and roles (Viewer, Editor, Owner) by Google email invite. Delete the business. |
 
@@ -23,6 +24,8 @@ A web app for running a concession business: sales by event, expenses with recei
 - **Tips** come from the tip jar, so they're tracked per shift but aren't a business cost.
 - Card fees: Square sales use Square's actual fee. Other card sales use the estimated rate from Settings (set it to 0 if you log processor fees as expenses).
 - Tips customers add on Square are shown, but not counted as sales.
+- **Revenue share (EPR)** = 25% × (gross sales − sales tax − cost of goods − employee costs) for each month, never below zero. Cost of goods is Food & drink and Paper & supplies purchases that month (or, if chosen in Settings, the recipe cost of what sold). Employee costs are wages plus payroll burden; tips aren't included. Events marked "not covered by the agreement" are left out. The share is subtracted in profit.
+- Sales tax and EPR payments are logged as expenses in their own categories, but they settle amounts already accounted for, so they're not counted as costs again.
 
 ## Run it locally
 

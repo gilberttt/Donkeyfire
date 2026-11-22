@@ -38,6 +38,11 @@
             <Kpi Label="Food cost" Icon="bi-egg-fried" Value="@Fmt.Pct(p.FoodCostPct)" ValueClass="@(p.NetSales > 0 && p.FoodCostPct > target ? "num-over" : "")"
                  Sub="@($"{Fmt.Money(p.FoodCost)} recipe cost · target {Fmt.Pct(target)}")" Hint="Recipe cost of items sold, as a share of net sales" Href="@($"{ctx.Base}/menu")" />
             <Kpi Label="Sales per labor hour" Icon="bi-stopwatch" Value="@Fmt.Money(p.SalesPerLaborHour)" />
+            <Kpi Label="Sales tax" Icon="bi-bank" Value="@Fmt.Money(p.SalesTax)" Sub="@period.Label" Href="@($"{ctx.Base}/taxes")" />
+            @if (p.Share is { } share)
+            {
+                <Kpi Label="@TaxesAndShare.Short(share.Partner)" Icon="bi-tree" Value="@Fmt.Money(share.Owed)" Sub="@($"{Fmt.Qty(share.Percent)}% · {period.Label.ToLowerInvariant()}")" Href="@($"{ctx.Base}/taxes")" />
+            }
             <Kpi Label="Low stock" Icon="bi-exclamation-triangle" Value="@lowStock.Count.ToString()" ValueClass="@(lowStock.Count > 0 ? "num-over" : "")" Href="@($"{ctx.Base}/inventory")" />
             <Kpi Label="Next event" Icon="bi-calendar-event" Value="@(next?.Name ?? "None planned")" Sub="@(next is null ? null : Fmt.Date(next.StartDate))" Href="@(next is null ? $"{ctx.Base}/events" : $"{ctx.Base}/events/{next.Id}")" />
         </div>
@@ -164,7 +169,7 @@
         {
             new object?[] { "Gross sales", p.GrossSales }, new object?[] { "Sales tax", p.SalesTax }, new object?[] { "Net sales", p.NetSales },
             new object?[] { "Card fees (est.)", p.CardFees }, new object?[] { "Event commissions", p.Commissions }, new object?[] { "Labor", p.Labor },
-            new object?[] { "Expenses", p.Expenses },
+            new object?[] { "Revenue share", p.ShareOwed }, new object?[] { "Expenses", p.Expenses },
         };
         rows.AddRange(p.ExpensesByCategory.Select(x => new object?[] { "  " + Fmt.Label(x.Category), x.Amount }));
         rows.Add(["Net profit", p.NetProfit]);

@@ -24,11 +24,22 @@
                     </div>
                     <div><label class="form-label" for="nb-city">City</label><InputText id="nb-city" class="form-control" @bind-Value="model.City" /></div>
                     <div><label class="form-label" for="nb-state">State</label><InputText id="nb-state" class="form-control" @bind-Value="model.State" /></div>
-                    <div><label class="form-label" for="nb-tax">Sales tax rate (%)</label><InputNumber id="nb-tax" class="form-control" @bind-Value="model.SalesTax" /></div>
+                    <div class="full form-check ms-1">
+                        <InputCheckbox id="nb-eufaula" class="form-check-input" @bind-Value="model.EufaulaTaxes" />
+                        <label class="form-check-label" for="nb-eufaula">Sales tax for Eufaula, AL: 4% state + 1.5% Barbour County + 4% city (9.5%)</label>
+                    </div>
+                    @if (!model.EufaulaTaxes)
+                    {
+                        <div><label class="form-label" for="nb-tax">Sales tax rate (%)</label><InputNumber id="nb-tax" class="form-control" @bind-Value="model.SalesTax" /></div>
+                    }
                     <div><label class="form-label" for="nb-card">Card processing fee (%)</label><InputNumber id="nb-card" class="form-control" @bind-Value="model.CardFee" /></div>
                     <div class="full form-check ms-1">
                         <InputCheckbox id="nb-incl" class="form-check-input" @bind-Value="model.PricesIncludeTax" />
                         <label class="form-check-label" for="nb-incl">Menu prices include sales tax</label>
+                    </div>
+                    <div class="full form-check ms-1">
+                        <InputCheckbox id="nb-epr" class="form-check-input" @bind-Value="model.Epr" />
+                        <label class="form-check-label" for="nb-epr">Pay Eufaula Parks and Recreation 25% of monthly sales after tax, cost of goods and labor</label>
                     </div>
                     <div class="full form-check ms-1">
                         <InputCheckbox id="nb-starter" class="form-check-input" @bind-Value="model.Starter" />
@@ -50,8 +61,10 @@
     {
         [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Give the business a name.")]
         public string Name { get; set; } = "Donkey Fire Concessions";
-        public string? City { get; set; }
-        public string? State { get; set; }
+        public string? City { get; set; } = "Eufaula";
+        public string? State { get; set; } = "AL";
+        public bool EufaulaTaxes { get; set; } = true;
+        public bool Epr { get; set; } = true;
         public decimal? SalesTax { get; set; }
         public decimal? CardFee { get; set; } = 2.6m;
         public bool PricesIncludeTax { get; set; } = true;
@@ -68,8 +81,9 @@
         {
             Name = model.Name.Trim(), City = model.City, State = model.State, SalesTaxPercent = model.SalesTax ?? 0,
             CardFeePercent = model.CardFee ?? 0, PricesIncludeTax = model.PricesIncludeTax,
+            RevenueSharePartner = model.Epr ? "Eufaula Parks and Recreation" : null, RevenueSharePercent = model.Epr ? 25 : 0,
         };
-        var created = await Seeder.CreateBusinessAsync(business, await Me.RequireIdAsync(), model.Starter);
+        var created = await Seeder.CreateBusinessAsync(business, await Me.RequireIdAsync(), model.Starter, model.EufaulaTaxes);
         Nav.NavigateTo($"/b/{created.Id}");
     }
 }
