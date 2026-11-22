@@ -1,0 +1,28 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject ToastService Toasts
+
+@Body
+
+<div class="toasts" aria-live="polite">
+    @foreach (var t in Toasts.Items.ToList())
+    {
+        <div class="toast-bt @t.Kind" role="status">
+            <i class="bi @(t.Kind == "danger" ? "bi-exclamation-triangle" : "bi-check2-circle")"></i>
+            <span>@t.Message</span>
+            <button type="button" aria-label="Dismiss" @onclick="() => Toasts.Dismiss(t.Id)"><i class="bi bi-x-lg"></i></button>
+        </div>
+    }
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    Something went wrong. Reload the page to continue.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    protected override void OnInitialized() => Toasts.Changed += OnToasts;
+    private void OnToasts() => InvokeAsync(StateHasChanged);
+    public void Dispose() => Toasts.Changed -= OnToasts;
+}

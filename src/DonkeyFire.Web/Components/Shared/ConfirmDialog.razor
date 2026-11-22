@@ -1,0 +1,35 @@
+@* Ask before destructive actions: <ConfirmDialog @ref="confirm" /> then await confirm.AskAsync("Delete X?"). *@
+<Modal Open="open" Title="@title" Icon="bi-exclamation-triangle" OpenChanged="Cancel">
+    <ChildContent><p class="mb-0">@message</p></ChildContent>
+    <Footer>
+        <button class="btn btn-outline-secondary" @onclick="() => Done(false)">Cancel</button>
+        <button class="btn btn-danger" @onclick="() => Done(true)">@confirmText</button>
+    </Footer>
+</Modal>
+
+@code {
+    private bool open;
+    private string title = "Are you sure?";
+    private string message = "";
+    private string confirmText = "Delete";
+    private TaskCompletionSource<bool>? tcs;
+
+    public Task<bool> AskAsync(string message, string title = "Delete this item?", string confirmText = "Delete")
+    {
+        this.message = message;
+        this.title = title;
+        this.confirmText = confirmText;
+        open = true;
+        tcs = new TaskCompletionSource<bool>();
+        StateHasChanged();
+        return tcs.Task;
+    }
+
+    private void Done(bool ok)
+    {
+        open = false;
+        tcs?.TrySetResult(ok);
+    }
+
+    private void Cancel(bool _) => Done(false);
+}

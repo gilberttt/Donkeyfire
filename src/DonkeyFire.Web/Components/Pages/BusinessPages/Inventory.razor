@@ -1,0 +1,314 @@
+@page "/b/{BusinessId:int}/inventory"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject InventoryService InventorySvc
+@inject ToastService Toasts
+@inject IJSRuntime JS
+
+<PageTitle>Inventory · Donkey Fire</PageTitle>
+
+<BusinessShell BusinessId="BusinessId" OnLoaded="Load" Context="ctx">
+    <div class="page-head">
+        <div>
+            <div class="eyebrow">Kitchen</div>
+            <h1 class="display-title">Inventory</h1>
+        </div>
+        <div class="actions">
+            <button class="btn btn-outline-secondary" disabled="@(Low.Count == 0)" @onclick="CopyShoppingList"><i class="bi bi-cart"></i> Copy shopping list</button>
+            <button class="btn btn-outline-secondary" @onclick="ExportCsv"><i class="bi bi-download"></i> CSV</button>
+            @if (ctx.CanEdit) { <button class="btn btn-accent" @onclick="New"><i class="bi bi-plus-lg"></i> Add item</button> }
+        </div>
+    </div>
+
+    <div class="kpis mb-3">
+        <Kpi Label="Items" Icon="bi-boxes" Value="@items.Count.ToString()" />
+        <Kpi Label="Value on hand" Icon="bi-cash-stack" Value="@Fmt.Money(items.Where(i => i.OnHand > 0).Sum(i => i.OnHand * i.UnitCost))" />
+        <Kpi Label="Low or out" Icon="bi-exclamation-triangle" Value="@Low.Count.ToString()" ValueClass="@(Low.Count > 0 ? "num-over" : "")" />
+        <Kpi Label="Waste this month" Icon="bi-trash" Value="@Fmt.Money(wasteThisMonth)" />
+    </div>
+
+    <div class="panel">
+        <div class="panel-head">
+            <div class="seg" role="group" aria-label="Category filter">
+                <button class="@(catFilter == -1 ? "on" : "")" @onclick="() => catFilter = -1">All</button>
+                <button class="@(catFilter == -2 ? "on" : "")" @onclick="() => catFilter = -2">Low</button>
+                @foreach (var c in Enum.GetValues<InventoryCategory>().Where(c => items.Any(i => i.Category == c)))
+                {
+                    <button class="@(catFilter == (int)c ? "on" : "")" @onclick="() => catFilter = (int)c">@Fmt.Label(c)</button>
+                }
+            </div>
+            <label class="visually-hidden" for="i-search">Search</label>
+            <input id="i-search" class="form-control form-control-sm" style="width:180px" placeholder="Search" @bind="search" @bind:event="oninput" />
+        </div>
+        @if (Filtered.Count == 0)
+        {
+            <div class="empty"><i class="bi bi-boxes"></i>@(items.Count == 0 ? "No inventory items yet. Add the ingredients, drinks and paper goods you stock." : "Nothing matches.")</div>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="table-bt">
+                    <thead><tr><th>Item</th><th>Category</th><th class="r">On hand</th><th class="r">Reorder at</th><th class="r">Unit cost</th><th class="r">Value</th><th>Supplier</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var i in Filtered)
+                        {
+                            <tr>
+                                <td><strong>@i.Name</strong>@if (!string.IsNullOrWhiteSpace(i.Location)) { <div class="small-muted"><i class="bi bi-geo-alt"></i> @i.Location</div> }</td>
+                                <td>@Fmt.Label(i.Category)</td>
+                                <td class="r @(i.IsLow ? "num-over fw-semibold" : "")">@Fmt.Qty(i.OnHand) <span class="small-muted">@i.Unit</span></td>
+                                <td class="r">@(i.ReorderLevel is { } r ? Fmt.Qty(r) : "—")</td>
+                                <td class="r">@Fmt.Money2(i.UnitCost)</td>
+                                <td class="r">@Fmt.Money2(Math.Max(0, i.OnHand) * i.UnitCost)</td>
+                                <td>@i.Supplier</td>
+                                <td class="row-actions text-nowrap">
+                                    @if (ctx.CanEdit)
+                                    {
+                                        <button class="btn btn-sm btn-outline-secondary" title="Bought more" aria-label="Add stock of @i.Name" @onclick="() => StartAdjust(i, AdjustmentReason.Purchase)"><i class="bi bi-plus-lg"></i></button>
+                                        <button class="btn btn-sm btn-outline-secondary" title="Used or wasted" aria-label="Use up @i.Name" @onclick="() => StartAdjust(i, AdjustmentReason.Used)"><i class="bi bi-dash-lg"></i></button>
+                                        <button class="btn btn-sm btn-outline-secondary" title="Count" aria-label="Count @i.Name" @onclick="() => StartAdjust(i, AdjustmentReason.Count)"><i class="bi bi-123"></i></button>
+                                    }
+                                    <button class="btn btn-sm btn-outline-secondary" title="History" aria-label="History of @i.Name" @onclick="() => ShowHistory(i)"><i class="bi bi-clock-history"></i></button>
+                                    @if (ctx.CanEdit) { <button class="btn btn-sm btn-outline-secondary" title="Edit" aria-label="Edit @i.Name" @onclick="() => Edit(i)"><i class="bi bi-pencil"></i></button> }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+    <p class="small-muted mt-2">Recording sales from menu items uses up their recipe ingredients automatically. Do a count now and then to true up what's really on the shelf.</p>
+
+    <Modal @bind-Open="editing" Title="@(form.Id == 0 ? "Add inventory item" : "Edit inventory item")" Icon="bi-boxes" Size="lg">
+        <ChildContent>
+            <div class="form-grid">
+                <div class="full"><label class="form-label" for="i-name">Name</label><input id="i-name" class="form-control" @bind="form.Name" @bind:event="oninput" /></div>
+                <div><label class="form-label" for="i-cat">Category</label>
+                    <select id="i-cat" class="form-select" @bind="form.Category">@foreach (var c in Enum.GetValues<InventoryCategory>()) { <option value="@c">@Fmt.Label(c)</option> }</select></div>
+                <div><label class="form-label" for="i-unit">Counting unit</label><input id="i-unit" class="form-control" list="i-units" @bind="form.Unit" />
+                    <datalist id="i-units">@foreach (var u in new[] { "each", "lb", "oz", "case", "box", "bag", "gallon", "cup", "slice" }) { <option value="@u"></option> }</datalist></div>
+                <div><label class="form-label" for="i-cost">Cost per unit ($)</label><input id="i-cost" type="number" min="0" step="0.01" class="form-control" @bind="form.UnitCost" /></div>
+                @if (form.Id == 0) { <div><label class="form-label" for="i-onhand">On hand now</label><input id="i-onhand" type="number" step="1" class="form-control" @bind="form.OnHand" /></div> }
+                <div><label class="form-label" for="i-reorder">Reorder when at or below</label><input id="i-reorder" type="number" min="0" step="1" class="form-control" @bind="form.ReorderLevel" /></div>
+                <div><label class="form-label" for="i-supplier">Supplier</label><input id="i-supplier" class="form-control" @bind="form.Supplier" placeholder="e.g. Sam's Club" /></div>
+                <div><label class="form-label" for="i-loc">Where it's kept</label><input id="i-loc" class="form-control" @bind="form.Location" placeholder="Trailer freezer, shop shelf…" /></div>
+                <div class="full"><label class="form-label" for="i-notes">Notes</label><textarea id="i-notes" class="form-control" rows="2" @bind="form.Notes"></textarea></div>
+            </div>
+            <p class="small-muted mt-3 mb-0">Cost per unit is in the counting unit: a $36 case of 144 buns is $0.25 each. Recipes use the same unit.</p>
+        </ChildContent>
+        <Footer>
+            @if (form.Id != 0) { <button class="btn btn-outline-danger me-auto" @onclick="Delete"><i class="bi bi-trash"></i> Delete</button> }
+            <button class="btn btn-outline-secondary" @onclick="() => editing = false">Cancel</button>
+            <button class="btn btn-primary" disabled="@(string.IsNullOrWhiteSpace(form.Name) || string.IsNullOrWhiteSpace(form.Unit))" @onclick="Save"><i class="bi bi-check-lg"></i> Save item</button>
+        </Footer>
+    </Modal>
+
+    <Modal @bind-Open="adjusting" Title="@AdjustTitle" Icon="bi-arrow-down-up">
+        <ChildContent>
+            @if (adjItem is not null)
+            {
+                <p class="small-muted">On hand now: <strong>@Fmt.Qty(adjItem.OnHand) @adjItem.Unit</strong></p>
+                @if (adjReason != AdjustmentReason.Purchase && adjReason != AdjustmentReason.Count)
+                {
+                    <div class="seg mb-3" role="radiogroup" aria-label="Reason">
+                        <button type="button" role="radio" aria-checked="@(adjReason == AdjustmentReason.Used)" class="@(adjReason == AdjustmentReason.Used ? "on" : "")" @onclick="() => adjReason = AdjustmentReason.Used">Used</button>
+                        <button type="button" role="radio" aria-checked="@(adjReason == AdjustmentReason.Waste)" class="@(adjReason == AdjustmentReason.Waste ? "on" : "")" @onclick="() => adjReason = AdjustmentReason.Waste">Wasted / spoiled</button>
+                    </div>
+                }
+                <div class="form-grid">
+                    <div><label class="form-label" for="a-amt">@(adjReason switch { AdjustmentReason.Count => "Counted on hand", AdjustmentReason.Purchase => "How many came in", _ => "How many" }) (@adjItem.Unit)</label>
+                        <input id="a-amt" type="number" min="0" step="1" class="form-control" @bind="adjAmount" @bind:event="oninput" /></div>
+                    <div><label class="form-label" for="a-date">Date</label><input id="a-date" type="date" class="form-control" @bind="adjDate" /></div>
+                    @if (adjReason == AdjustmentReason.Purchase)
+                    {
+                        <div><label class="form-label" for="a-cost">Cost per @adjItem.Unit ($)</label><input id="a-cost" type="number" min="0" step="0.01" class="form-control" @bind="adjCost" /></div>
+                    }
+                    <div class="full"><label class="form-label" for="a-note">Note</label><input id="a-note" class="form-control" @bind="adjNote" /></div>
+                </div>
+                @if (adjReason == AdjustmentReason.Purchase) { <p class="small-muted mt-3 mb-0">This updates stock and cost only. Log what you paid on the Expenses page.</p> }
+            }
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-outline-secondary" @onclick="() => adjusting = false">Cancel</button>
+            <button class="btn btn-primary" disabled="@(adjAmount is null || (adjReason != AdjustmentReason.Count && adjAmount == 0))" @onclick="SaveAdjust"><i class="bi bi-check-lg"></i> Save</button>
+        </Footer>
+    </Modal>
+
+    <Modal @bind-Open="historyOpen" Title="@($"History: {historyItem?.Name}")" Icon="bi-clock-history" Size="lg" CloseOnBackdrop="true">
+        <ChildContent>
+            @if (history.Count == 0)
+            {
+                <div class="empty py-3">No changes recorded yet.</div>
+            }
+            else
+            {
+                <div class="table-wrap" style="max-height:60vh">
+                    <table class="table-bt">
+                        <thead><tr><th>Date</th><th>Reason</th><th class="r">Change</th><th class="r">Unit cost</th><th>Note</th></tr></thead>
+                        <tbody>
+                            @foreach (var h in history)
+                            {
+                                <tr><td>@Fmt.Short(h.Date)</td><td>@Fmt.Label(h.Reason)</td><td class="r @(h.Change < 0 ? "num-over" : "num-under")">@(h.Change > 0 ? "+" : "")@Fmt.Qty(h.Change)</td>
+                                    <td class="r">@(h.UnitCost is { } uc ? Fmt.Money2(uc) : "")</td><td class="small">@h.Note</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </ChildContent>
+    </Modal>
+    <ConfirmDialog @ref="confirm" />
+</BusinessShell>
+
+@code {
+    [Parameter] public int BusinessId { get; set; }
+
+    private BusinessContext ctx = default!;
+    private List<InventoryItem> items = new();
+    private decimal wasteThisMonth;
+    private int catFilter = -1;
+    private string search = "";
+    private bool editing, adjusting, historyOpen;
+    private InventoryItem form = new();
+    private InventoryItem? adjItem, historyItem;
+    private AdjustmentReason adjReason;
+    private decimal? adjAmount, adjCost;
+    private DateOnly adjDate = Today;
+    private string? adjNote;
+    private List<InventoryAdjustment> history = new();
+    private ConfirmDialog confirm = default!;
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+    private List<InventoryItem> Low => items.Where(i => i.IsLow).OrderBy(i => i.Name).ToList();
+    private string AdjustTitle => adjReason switch
+    {
+        AdjustmentReason.Purchase => $"Add stock: {adjItem?.Name}",
+        AdjustmentReason.Count => $"Count: {adjItem?.Name}",
+        _ => $"Use up: {adjItem?.Name}",
+    };
+
+    private List<InventoryItem> Filtered => items
+        .Where(i => catFilter == -1 || (catFilter == -2 ? i.IsLow : (int)i.Category == catFilter))
+        .Where(i => string.IsNullOrWhiteSpace(search) || i.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+            || (i.Supplier?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false))
+        .OrderBy(i => i.Category).ThenBy(i => i.Name).ToList();
+
+    private async Task Load(BusinessContext c)
+    {
+        ctx = c;
+        await Refresh();
+    }
+
+    private async Task Refresh()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        items = await db.InventoryItems.AsNoTracking().Where(i => i.BusinessId == BusinessId).ToListAsync();
+        var monthStart = new DateOnly(Today.Year, Today.Month, 1);
+        var waste = await db.InventoryAdjustments.AsNoTracking().Include(a => a.InventoryItem)
+            .Where(a => a.BusinessId == BusinessId && a.Reason == AdjustmentReason.Waste && a.Date >= monthStart).ToListAsync();
+        wasteThisMonth = waste.Sum(a => -a.Change * (a.InventoryItem?.UnitCost ?? 0));
+    }
+
+    private void New()
+    {
+        form = new InventoryItem { BusinessId = BusinessId };
+        editing = true;
+    }
+
+    private void Edit(InventoryItem i)
+    {
+        form = new InventoryItem
+        {
+            Id = i.Id, BusinessId = i.BusinessId, Name = i.Name, Category = i.Category, Unit = i.Unit, OnHand = i.OnHand, UnitCost = i.UnitCost,
+            ReorderLevel = i.ReorderLevel, Supplier = i.Supplier, Location = i.Location, Notes = i.Notes,
+        };
+        editing = true;
+    }
+
+    private async Task Save()
+    {
+        form.Name = form.Name.Trim();
+        form.Unit = form.Unit.Trim();
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (form.Id == 0)
+        {
+            db.InventoryItems.Add(form);
+            await db.SaveChangesAsync();
+            if (form.OnHand != 0)
+            {
+                db.InventoryAdjustments.Add(new InventoryAdjustment { BusinessId = BusinessId, InventoryItemId = form.Id, Reason = AdjustmentReason.Count, Change = form.OnHand, Note = "Starting count" });
+                await db.SaveChangesAsync();
+            }
+        }
+        else
+        {
+            // On-hand only changes through adjustments, so history stays complete.
+            var n = await db.InventoryItems.Where(x => x.Id == form.Id && x.BusinessId == BusinessId).ExecuteUpdateAsync(u => u
+                .SetProperty(x => x.Name, form.Name).SetProperty(x => x.Category, form.Category).SetProperty(x => x.Unit, form.Unit)
+                .SetProperty(x => x.UnitCost, form.UnitCost).SetProperty(x => x.ReorderLevel, form.ReorderLevel).SetProperty(x => x.Supplier, form.Supplier)
+                .SetProperty(x => x.Location, form.Location).SetProperty(x => x.Notes, form.Notes));
+            if (n == 0) { Toasts.Error("That item no longer exists."); editing = false; return; }
+        }
+        editing = false;
+        Toasts.Show($"Saved {form.Name}.");
+        await Refresh();
+    }
+
+    private async Task Delete()
+    {
+        editing = false;
+        if (!await confirm.AskAsync($"Delete {form.Name}? It's removed from every recipe that uses it, along with its history.", "Delete this item?"))
+        {
+            editing = true;
+            return;
+        }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.InventoryItems.Where(x => x.Id == form.Id && x.BusinessId == BusinessId).ExecuteDeleteAsync();
+        Toasts.Show("Item deleted.");
+        await Refresh();
+    }
+
+    private void StartAdjust(InventoryItem i, AdjustmentReason reason)
+    {
+        adjItem = i;
+        adjReason = reason;
+        adjAmount = reason == AdjustmentReason.Count ? i.OnHand : null;
+        adjCost = reason == AdjustmentReason.Purchase ? i.UnitCost : null;
+        adjDate = Today;
+        adjNote = null;
+        adjusting = true;
+    }
+
+    private async Task SaveAdjust()
+    {
+        if (adjItem is null || adjAmount is not { } amt) return;
+        var adj = await InventorySvc.AdjustAsync(BusinessId, adjItem.Id, adjReason, amt, adjDate, adjCost, adjNote);
+        adjusting = false;
+        if (adj is null) Toasts.Error("That item no longer exists.");
+        else Toasts.Show($"{adjItem.Name}: {(adj.Change >= 0 ? "+" : "")}{Fmt.Qty(adj.Change)} {adjItem.Unit}.");
+        await Refresh();
+    }
+
+    private async Task ShowHistory(InventoryItem i)
+    {
+        historyItem = i;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        history = await db.InventoryAdjustments.AsNoTracking().Where(a => a.BusinessId == BusinessId && a.InventoryItemId == i.Id)
+            .OrderByDescending(a => a.Date).ThenByDescending(a => a.Id).Take(300).ToListAsync();
+        historyOpen = true;
+    }
+
+    private async Task CopyShoppingList()
+    {
+        var text = string.Join("\n", Low.GroupBy(i => i.Supplier ?? "Anywhere").SelectMany(g =>
+            new[] { $"{g.Key}:" }.Concat(g.Select(i => $"  - {i.Name} (have {Fmt.Qty(i.OnHand)} {i.Unit}, reorder at {Fmt.Qty(i.ReorderLevel ?? 0)})"))));
+        if (await JS.InvokeAsync<bool>("bt.copy", text)) Toasts.Show($"Copied {Low.Count} items.");
+        else Toasts.Error("Couldn't copy to the clipboard.");
+    }
+
+    private async Task ExportCsv()
+    {
+        var csv = Csv.Build(["Item", "Category", "On hand", "Unit", "Reorder at", "Unit cost", "Value", "Supplier", "Location"],
+            Filtered.Select(i => new object?[] { i.Name, i.Category, i.OnHand, i.Unit, i.ReorderLevel, i.UnitCost, Math.Round(Math.Max(0, i.OnHand) * i.UnitCost, 2), i.Supplier, i.Location }));
+        await JS.InvokeVoidAsync("bt.download", $"inventory-{Today:yyyyMMdd}.csv", csv);
+    }
+}

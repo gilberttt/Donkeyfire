@@ -1,0 +1,75 @@
+@page "/businesses/new"
+@inject BusinessSeeder Seeder
+@inject CurrentUser Me
+@inject NavigationManager Nav
+
+<PageTitle>New Business · Donkey Fire</PageTitle>
+
+<AppFrame>
+    <div class="page-head">
+        <div>
+            <div class="eyebrow">New business</div>
+            <h1 class="display-title">Set up a business</h1>
+        </div>
+    </div>
+    <EditForm Model="model" OnValidSubmit="Create" FormName="new-business">
+        <DataAnnotationsValidator />
+        <div class="panel">
+            <div class="panel-body">
+                <div class="form-grid">
+                    <div class="full">
+                        <label class="form-label" for="nb-name">Business name</label>
+                        <InputText id="nb-name" class="form-control" @bind-Value="model.Name" />
+                        <ValidationMessage For="() => model.Name" />
+                    </div>
+                    <div><label class="form-label" for="nb-city">City</label><InputText id="nb-city" class="form-control" @bind-Value="model.City" /></div>
+                    <div><label class="form-label" for="nb-state">State</label><InputText id="nb-state" class="form-control" @bind-Value="model.State" /></div>
+                    <div><label class="form-label" for="nb-tax">Sales tax rate (%)</label><InputNumber id="nb-tax" class="form-control" @bind-Value="model.SalesTax" /></div>
+                    <div><label class="form-label" for="nb-card">Card processing fee (%)</label><InputNumber id="nb-card" class="form-control" @bind-Value="model.CardFee" /></div>
+                    <div class="full form-check ms-1">
+                        <InputCheckbox id="nb-incl" class="form-check-input" @bind-Value="model.PricesIncludeTax" />
+                        <label class="form-check-label" for="nb-incl">Menu prices include sales tax</label>
+                    </div>
+                    <div class="full form-check ms-1">
+                        <InputCheckbox id="nb-starter" class="form-check-input" @bind-Value="model.Starter" />
+                        <label class="form-check-label" for="nb-starter">Start with a sample concession menu (hot dogs, burgers, nachos, funnel cakes, popcorn, drinks) and its inventory items, to edit</label>
+                    </div>
+                </div>
+                <p class="small-muted mt-3 mb-0">Everything can be changed later in Settings.</p>
+            </div>
+            <div class="bt-modal-foot">
+                <a class="btn btn-outline-secondary" href="/">Cancel</a>
+                <button class="btn btn-accent" type="submit" disabled="@busy">@(busy ? "Creating…" : "Create business")</button>
+            </div>
+        </div>
+    </EditForm>
+</AppFrame>
+
+@code {
+    private class Model
+    {
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Give the business a name.")]
+        public string Name { get; set; } = "Donkey Fire Concessions";
+        public string? City { get; set; }
+        public string? State { get; set; }
+        public decimal? SalesTax { get; set; }
+        public decimal? CardFee { get; set; } = 2.6m;
+        public bool PricesIncludeTax { get; set; } = true;
+        public bool Starter { get; set; } = true;
+    }
+
+    private readonly Model model = new();
+    private bool busy;
+
+    private async Task Create()
+    {
+        busy = true;
+        var business = new Business
+        {
+            Name = model.Name.Trim(), City = model.City, State = model.State, SalesTaxPercent = model.SalesTax ?? 0,
+            CardFeePercent = model.CardFee ?? 0, PricesIncludeTax = model.PricesIncludeTax,
+        };
+        var created = await Seeder.CreateBusinessAsync(business, await Me.RequireIdAsync(), model.Starter);
+        Nav.NavigateTo($"/b/{created.Id}");
+    }
+}

@@ -1,0 +1,101 @@
+@page "/b/{BusinessId:int}/events"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject BusinessMetrics Metrics
+@inject ToastService Toasts
+
+<PageTitle>Events · Donkey Fire</PageTitle>
+
+<BusinessShell BusinessId="BusinessId" OnLoaded="Load" Context="ctx">
+    <div class="page-head">
+        <div>
+            <div class="eyebrow">Money</div>
+            <h1 class="display-title">Events</h1>
+        </div>
+        <div class="actions">
+            @if (ctx.CanEdit) { <button class="btn btn-accent" @onclick="New"><i class="bi bi-plus-lg"></i> Add event</button> }
+        </div>
+    </div>
+
+    <div class="tabs" role="tablist">
+        <button type="button" role="tab" aria-selected="@(!past)" class="@(!past ? "active" : "")" @onclick="() => past = false"><i class="bi bi-calendar-plus"></i> Upcoming (@Upcoming.Count)</button>
+        <button type="button" role="tab" aria-selected="@past" class="@(past ? "active" : "")" @onclick="() => past = true"><i class="bi bi-calendar-check"></i> Past (@Past.Count)</button>
+    </div>
+
+    <div class="panel">
+        @if ((past ? Past : Upcoming).Count == 0)
+        {
+            <div class="empty"><i class="bi bi-calendar-event"></i>@(past ? "No past events yet." : "Nothing on the calendar. Add the next festival, game or catering job.")</div>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="table-bt">
+                    <thead><tr><th>Event</th><th>Dates</th><th>Type</th><th>Location</th><th>Status</th><th class="r">Fee</th>
+                        @if (past) { <th class="r">Net sales</th><th class="r">Profit</th> } else { <th class="r">Goal</th> }<th></th></tr></thead>
+                    <tbody>
+                        @foreach (var e in past ? Past : Upcoming)
+                        {
+                            <tr>
+                                <td><a href="@($"{ctx.Base}/events/{e.Id}")"><strong>@e.Name</strong></a></td>
+                                <td class="text-nowrap">@Fmt.Days(e.StartDate, e.EndDate)</td>
+                                <td>@Fmt.Label(e.Kind)</td>
+                                <td>@e.Location</td>
+                                <td><StatusPill Kind="@StatusKind(e.Status)" Text="@Fmt.Label(e.Status)" /></td>
+                                <td class="r">@(e.BoothFee == 0 ? "—" : Fmt.Money(e.BoothFee))@(e.CommissionPercent > 0 ? $" + {Fmt.Qty(e.CommissionPercent)}%" : "")</td>
+                                @if (past)
+                                {
+                                    var r = results.GetValueOrDefault(e.Id);
+                                    <td class="r">@Fmt.Money(r?.NetSales)</td>
+                                    <td class="r @(r is null ? "" : Fmt.ProfitClass(r.NetProfit))">@Fmt.Money(r?.NetProfit)</td>
+                                }
+                                else
+                                {
+                                    <td class="r">@Fmt.Money(e.SalesGoal)</td>
+                                }
+                                <td class="row-actions">
+                                    @if (ctx.CanEdit) { <button class="btn btn-sm btn-outline-secondary" title="Edit" aria-label="Edit @e.Name" @onclick="() => Edit(e)"><i class="bi bi-pencil"></i></button> }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+
+    <EventForm @ref="eventForm" BusinessId="BusinessId" OnSaved="Refresh" />
+</BusinessShell>
+
+@code {
+    [Parameter] public int BusinessId { get; set; }
+
+    private BusinessContext ctx = default!;
+    private List<Event> events = new();
+    private Dictionary<int, PnL> results = new();
+    private bool past;
+    private EventForm eventForm = default!;
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+    private List<Event> Upcoming => events.Where(e => e.LastDate >= Today && e.Status == EventStatus.Planned).OrderBy(e => e.StartDate).ToList();
+    private List<Event> Past => events.Except(Upcoming).OrderByDescending(e => e.StartDate).ToList();
+
+    public static string StatusKind(EventStatus s) => s switch { EventStatus.Done => "done", EventStatus.Cancelled => "blocked", _ => "active" };
+
+    private async Task Load(BusinessContext c)
+    {
+        ctx = c;
+        await Refresh();
+        past = Upcoming.Count == 0 && Past.Count > 0;
+    }
+
+    private async Task Refresh()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        events = await db.Events.AsNoTracking().Where(e => e.BusinessId == BusinessId).ToListAsync();
+        var snap = await Metrics.ForPeriodAsync(ctx.Business, Period.FromPreset("all", Today));
+        results = snap.Events.ToDictionary(r => r.Event.Id, r => r.PnL);
+    }
+
+    private void New() => eventForm.Open(new Event { BusinessId = BusinessId });
+    private void Edit(Event e) => eventForm.Open(e);
+}

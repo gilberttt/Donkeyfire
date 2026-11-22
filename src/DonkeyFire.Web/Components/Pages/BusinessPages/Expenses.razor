@@ -1,0 +1,215 @@
+@page "/b/{BusinessId:int}/expenses"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ToastService Toasts
+@inject IJSRuntime JS
+
+<PageTitle>Expenses · Donkey Fire</PageTitle>
+
+<BusinessShell BusinessId="BusinessId" OnLoaded="Load" Context="ctx">
+    <div class="page-head">
+        <div>
+            <div class="eyebrow">Money</div>
+            <h1 class="display-title">Expenses</h1>
+        </div>
+        <div class="actions">
+            <button class="btn btn-outline-secondary" @onclick="ExportCsv"><i class="bi bi-download"></i> CSV</button>
+            @if (ctx.CanEdit) { <button class="btn btn-accent" @onclick="New"><i class="bi bi-plus-lg"></i> Add expense</button> }
+        </div>
+    </div>
+
+    <div class="kpis mb-3">
+        <Kpi Label="Total" Icon="bi-receipt" Value="@Fmt.Money(Filtered.Sum(e => e.Amount))" Sub="@($"{Filtered.Count} expenses")" />
+        @foreach (var g in Filtered.GroupBy(e => e.Category).OrderByDescending(g => g.Sum(e => e.Amount)).Take(3))
+        {
+            <Kpi Label="@Fmt.Label(g.Key)" Value="@Fmt.Money(g.Sum(e => e.Amount))" />
+        }
+        <Kpi Label="Missing receipts" Icon="bi-camera" Value="@Filtered.Count(e => e.ReceiptFileId is null).ToString()" />
+    </div>
+
+    <div class="panel">
+        <div class="panel-head">
+            <div class="d-flex flex-wrap gap-2">
+                <label class="visually-hidden" for="x-period">Period</label>
+                <select id="x-period" class="form-select form-select-sm" style="width:auto" value="@preset" @onchange="ChangePeriod">
+                    @foreach (var (key, label) in Period.Presets) { <option value="@key">@label</option> }
+                </select>
+                <label class="visually-hidden" for="x-cat">Category</label>
+                <select id="x-cat" class="form-select form-select-sm" style="width:auto" @bind="catFilter">
+                    <option value="-1">All categories</option>
+                    @foreach (var c in Enum.GetValues<ExpenseCategory>()) { <option value="@((int)c)">@Fmt.Label(c)</option> }
+                </select>
+                <label class="visually-hidden" for="x-event">Event</label>
+                <EventSelect Id="x-event" CssClass="form-select-sm" NoneText="All events" Events="events" @bind-Value="eventFilter" />
+            </div>
+            <label class="visually-hidden" for="x-search">Search</label>
+            <input id="x-search" class="form-control form-control-sm" style="width:180px" placeholder="Search" @bind="search" @bind:event="oninput" />
+        </div>
+        @if (Filtered.Count == 0)
+        {
+            <div class="empty"><i class="bi bi-receipt"></i>@(items.Count == 0 ? "No expenses in this period." : "Nothing matches these filters.")</div>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="table-bt">
+                    <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Vendor</th><th>Event</th><th>Paid</th><th class="r">Amount</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var e in Filtered)
+                        {
+                            <tr>
+                                <td class="text-nowrap">@Fmt.Short(e.Date)</td>
+                                <td>@e.Description@if (!string.IsNullOrWhiteSpace(e.Notes)) { <div class="small-muted">@e.Notes</div> }</td>
+                                <td>@Fmt.Label(e.Category)</td>
+                                <td>@e.Vendor</td>
+                                <td>@EventName(e.EventId)</td>
+                                <td>@e.Payment</td>
+                                <td class="r">@Fmt.Money2(e.Amount)</td>
+                                <td class="row-actions text-nowrap">
+                                    @if (e.ReceiptFileId is { } rf) { <a class="btn btn-sm btn-outline-secondary" href="@($"/files/{rf}")" target="_blank" title="Receipt" aria-label="Receipt for @e.Description"><i class="bi bi-image"></i></a> }
+                                    @if (ctx.CanEdit)
+                                    {
+                                        <button class="btn btn-sm btn-outline-secondary" title="Edit" aria-label="Edit @e.Description" @onclick="() => Edit(e)"><i class="bi bi-pencil"></i></button>
+                                        <button class="btn btn-sm btn-outline-secondary" title="Delete" aria-label="Delete @e.Description" @onclick="() => Delete(e)"><i class="bi bi-trash"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot><tr><td colspan="6">Total</td><td class="r">@Fmt.Money2(Filtered.Sum(e => e.Amount))</td><td></td></tr></tfoot>
+                </table>
+            </div>
+        }
+    </div>
+
+    <Modal @bind-Open="editing" Title="@(form.Id == 0 ? "Add expense" : "Edit expense")" Icon="bi-receipt" Size="lg">
+        <ChildContent>
+            <div class="form-grid">
+                <div class="full"><label class="form-label" for="x-desc">What was it</label><input id="x-desc" class="form-control" @bind="form.Description" @bind:event="oninput" placeholder="e.g. Restaurant Depot run" /></div>
+                <div><label class="form-label" for="x-amt">Amount ($)</label><input id="x-amt" type="number" step="0.01" class="form-control" @bind="form.Amount" /></div>
+                <div><label class="form-label" for="x-date">Date</label><input id="x-date" type="date" class="form-control" @bind="form.Date" /></div>
+                <div><label class="form-label" for="x-fcat">Category</label>
+                    <select id="x-fcat" class="form-select" @bind="form.Category">@foreach (var c in Enum.GetValues<ExpenseCategory>()) { <option value="@c">@Fmt.Label(c)</option> }</select></div>
+                <div><label class="form-label" for="x-vendor">Vendor</label><input id="x-vendor" class="form-control" list="x-vendors" @bind="form.Vendor" />
+                    <datalist id="x-vendors">@foreach (var v in vendors) { <option value="@v"></option> }</datalist></div>
+                <div><label class="form-label" for="x-fevent">Event</label><EventSelect Id="x-fevent" Events="events" @bind-Value="form.EventId" /></div>
+                <div><label class="form-label" for="x-pay">Paid with</label>
+                    <select id="x-pay" class="form-select" @bind="form.Payment">@foreach (var m in Enum.GetValues<PaymentMethod>()) { <option value="@m">@m</option> }</select></div>
+                <div class="full">
+                    <span class="form-label d-block">Receipt</span>
+                    <div class="d-flex gap-2 align-items-center flex-wrap">
+                        @if (form.ReceiptFileId is { } fp)
+                        {
+                            <a href="@($"/files/{fp}")" target="_blank"><img src="@($"/files/{fp}")" alt="Receipt" style="width:56px;height:56px;object-fit:cover;border-radius:6px" /></a>
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => form.ReceiptFileId = null"><i class="bi bi-x-lg"></i> Remove</button>
+                        }
+                        <FileUploadButton BusinessId="BusinessId" Accept="image/*,application/pdf" Capture="environment" Icon="bi-camera" Text="@(form.ReceiptFileId is null ? "Snap receipt" : "Replace")" OnUploaded="f => form.ReceiptFileId = f.Id" />
+                    </div>
+                </div>
+                <div class="full"><label class="form-label" for="x-notes">Notes</label><textarea id="x-notes" class="form-control" rows="2" @bind="form.Notes"></textarea></div>
+            </div>
+            <p class="small-muted mt-3 mb-0">Bought stock? Log it here for the money, then add it on the Inventory page so counts and recipe costs stay current.</p>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-outline-secondary" @onclick="() => editing = false">Cancel</button>
+            <button class="btn btn-primary" disabled="@(string.IsNullOrWhiteSpace(form.Description) || form.Amount == 0)" @onclick="Save"><i class="bi bi-check-lg"></i> Save expense</button>
+        </Footer>
+    </Modal>
+    <ConfirmDialog @ref="confirm" />
+</BusinessShell>
+
+@code {
+    [Parameter] public int BusinessId { get; set; }
+
+    private BusinessContext ctx = default!;
+    private List<Expense> items = new();
+    private List<Event> events = new();
+    private List<string> vendors = new();
+    private string preset = "month";
+    private int catFilter = -1;
+    private int? eventFilter;
+    private string search = "";
+    private bool editing;
+    private Expense form = new();
+    private ConfirmDialog confirm = default!;
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+    private string? EventName(int? id) => id is null ? null : events.FirstOrDefault(e => e.Id == id)?.Name;
+
+    private List<Expense> Filtered => items
+        .Where(e => catFilter < 0 || (int)e.Category == catFilter)
+        .Where(e => eventFilter is null || e.EventId == eventFilter)
+        .Where(e => string.IsNullOrWhiteSpace(search) || e.Description.Contains(search, StringComparison.OrdinalIgnoreCase)
+            || (e.Vendor?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false) || (e.Notes?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false))
+        .ToList();
+
+    private async Task Load(BusinessContext c)
+    {
+        ctx = c;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        events = await db.Events.AsNoTracking().Where(e => e.BusinessId == BusinessId).ToListAsync();
+        await Refresh();
+    }
+
+    private async Task Refresh()
+    {
+        var p = Period.FromPreset(preset, Today);
+        await using var db = await DbFactory.CreateDbContextAsync();
+        items = await db.Expenses.AsNoTracking().Where(e => e.BusinessId == BusinessId && e.Date >= p.From && e.Date <= p.To)
+            .OrderByDescending(e => e.Date).ThenByDescending(e => e.Id).ToListAsync();
+        vendors = await db.Expenses.AsNoTracking().Where(e => e.BusinessId == BusinessId && e.Vendor != null).Select(e => e.Vendor!).Distinct().OrderBy(v => v).ToListAsync();
+    }
+
+    private async Task ChangePeriod(ChangeEventArgs e)
+    {
+        preset = e.Value?.ToString() ?? "month";
+        await Refresh();
+    }
+
+    private void New()
+    {
+        var running = events.FirstOrDefault(e => e.StartDate <= Today && e.LastDate >= Today);
+        form = new Expense { BusinessId = BusinessId, EventId = running?.Id };
+        editing = true;
+    }
+
+    private void Edit(Expense e)
+    {
+        form = new Expense
+        {
+            Id = e.Id, BusinessId = e.BusinessId, Date = e.Date, Category = e.Category, Vendor = e.Vendor, Description = e.Description, Amount = e.Amount,
+            EventId = e.EventId, Payment = e.Payment, ReceiptFileId = e.ReceiptFileId, Notes = e.Notes, CreatedAt = e.CreatedAt,
+        };
+        editing = true;
+    }
+
+    private async Task Save()
+    {
+        form.Description = form.Description.Trim();
+        form.Vendor = string.IsNullOrWhiteSpace(form.Vendor) ? null : form.Vendor.Trim();
+        form.Notes = string.IsNullOrWhiteSpace(form.Notes) ? null : form.Notes.Trim();
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (form.Id == 0) db.Expenses.Add(form);
+        else if (await db.Expenses.AnyAsync(x => x.Id == form.Id && x.BusinessId == BusinessId)) db.Expenses.Update(form);
+        else { Toasts.Error("That expense no longer exists."); editing = false; return; }
+        await db.SaveChangesAsync();
+        editing = false;
+        Toasts.Show($"Saved {form.Description}.");
+        await Refresh();
+    }
+
+    private async Task Delete(Expense e)
+    {
+        if (!await confirm.AskAsync($"Delete \"{e.Description}\" ({Fmt.Money2(e.Amount)})?")) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.Expenses.Where(x => x.Id == e.Id && x.BusinessId == BusinessId).ExecuteDeleteAsync();
+        Toasts.Show("Expense deleted.");
+        await Refresh();
+    }
+
+    private async Task ExportCsv()
+    {
+        var csv = Csv.Build(["Date", "Description", "Category", "Vendor", "Event", "Paid with", "Amount", "Receipt", "Notes"],
+            Filtered.Select(e => new object?[] { e.Date, e.Description, e.Category, e.Vendor, EventName(e.EventId), e.Payment, e.Amount, e.ReceiptFileId is null ? "" : "yes", e.Notes }));
+        await JS.InvokeVoidAsync("bt.download", $"expenses-{preset}-{Today:yyyyMMdd}.csv", csv);
+    }
+}

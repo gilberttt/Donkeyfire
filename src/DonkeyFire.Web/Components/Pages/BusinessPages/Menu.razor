@@ -1,0 +1,234 @@
+@page "/b/{BusinessId:int}/menu"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ToastService Toasts
+@inject IJSRuntime JS
+
+<PageTitle>Menu · Donkey Fire</PageTitle>
+
+<BusinessShell BusinessId="BusinessId" OnLoaded="Load" Context="ctx">
+    <div class="page-head">
+        <div>
+            <div class="eyebrow">Kitchen</div>
+            <h1 class="display-title">Menu &amp; recipes</h1>
+        </div>
+        <div class="actions">
+            <button class="btn btn-outline-secondary" @onclick="ExportCsv"><i class="bi bi-download"></i> CSV</button>
+            @if (ctx.CanEdit) { <button class="btn btn-accent" @onclick="New"><i class="bi bi-plus-lg"></i> Add menu item</button> }
+        </div>
+    </div>
+
+    <div class="kpis mb-3">
+        <Kpi Label="Active items" Icon="bi-card-list" Value="@items.Count(i => i.IsActive).ToString()" />
+        <Kpi Label="Average food cost" Icon="bi-egg-fried" Value="@Fmt.Pct(AvgFoodCost)" Sub="@($"Target {Fmt.Pct(Target)}")" ValueClass="@(AvgFoodCost > Target ? "num-over" : "")" />
+        <Kpi Label="Over target" Icon="bi-exclamation-triangle" Value="@items.Count(i => i.IsActive && Over(i)).ToString()" ValueClass="@(items.Any(i => i.IsActive && Over(i)) ? "num-over" : "")" />
+        <Kpi Label="No cost set" Icon="bi-question-circle" Value="@items.Count(i => i.IsActive && BusinessMetrics.RecipeCost(i) == 0).ToString()" Hint="Add a recipe or a manual cost so food cost is right" />
+    </div>
+
+    <div class="panel">
+        @if (items.Count == 0)
+        {
+            <div class="empty"><i class="bi bi-card-list"></i>No menu items yet. Add what you sell, then build each recipe from inventory items so the app knows what each one costs.</div>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="table-bt">
+                    <thead><tr><th>Item</th><th>Category</th><th class="r">Price</th><th class="r">Cost</th><th class="r">Food cost</th><th class="r">Margin</th><th>Recipe</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var m in items.OrderBy(i => !i.IsActive).ThenBy(i => i.SortOrder).ThenBy(i => i.Name))
+                        {
+                            var cost = BusinessMetrics.RecipeCost(m);
+                            <tr class="@(m.IsActive ? "" : "text-muted")">
+                                <td><strong>@m.Name</strong>@if (!m.IsActive) { <span class="pill pill-pending ms-1">Hidden</span> }</td>
+                                <td>@m.Category</td>
+                                <td class="r">@Fmt.Money2(m.Price)</td>
+                                <td class="r">@Fmt.Money2(cost)</td>
+                                <td class="r @(Over(m) ? "num-over fw-semibold" : "")">@(m.Price == 0 ? "—" : Fmt.Pct(BusinessMetrics.FoodCostPct(m)))</td>
+                                <td class="r">@Fmt.Money2(m.Price - cost)</td>
+                                <td class="small-muted">@(m.Recipe.Count == 0 ? (m.ManualCost is null ? "None" : "Manual cost") : string.Join(", ", m.Recipe.Select(r => r.InventoryItem?.Name)))</td>
+                                <td class="row-actions text-nowrap">
+                                    @if (ctx.CanEdit)
+                                    {
+                                        <button class="btn btn-sm btn-outline-secondary" title="Edit" aria-label="Edit @m.Name" @onclick="() => Edit(m)"><i class="bi bi-pencil"></i></button>
+                                        <button class="btn btn-sm btn-outline-secondary" title="@(m.IsActive ? "Hide from ring-up" : "Show on ring-up")" aria-label="@(m.IsActive ? "Hide" : "Show") @m.Name" @onclick="() => ToggleActive(m)"><i class="bi @(m.IsActive ? "bi-eye-slash" : "bi-eye")"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+
+    <Modal @bind-Open="editing" Title="@(form.Id == 0 ? "Add menu item" : "Edit menu item")" Icon="bi-card-list" Size="lg">
+        <ChildContent>
+            <div class="form-grid">
+                <div class="full"><label class="form-label" for="m-name">Name</label><input id="m-name" class="form-control" @bind="form.Name" @bind:event="oninput" /></div>
+                <div><label class="form-label" for="m-cat">Category</label><input id="m-cat" class="form-control" list="m-cats" @bind="form.Category" placeholder="Food, Drinks, Sweets…" />
+                    <datalist id="m-cats">@foreach (var c in items.Select(i => i.Category).Where(c => c != null).Distinct()) { <option value="@c"></option> }</datalist></div>
+                <div><label class="form-label" for="m-price">Price ($)</label><input id="m-price" type="number" min="0" step="0.25" class="form-control" @bind="form.Price" @bind:event="oninput" /></div>
+                <div><label class="form-label" for="m-order">Order on ring-up</label><input id="m-order" type="number" step="1" class="form-control" @bind="form.SortOrder" /></div>
+                <div class="d-flex align-items-end"><div class="form-check"><input id="m-active" type="checkbox" class="form-check-input" @bind="form.IsActive" /><label class="form-check-label" for="m-active">Show on ring-up</label></div></div>
+            </div>
+
+            <h3 class="eyebrow mt-4 mb-2">Recipe: what one serving uses</h3>
+            @if (stock.Count == 0)
+            {
+                <p class="small-muted">Add inventory items first, then pick them here.</p>
+            }
+            <table class="table-bt mb-2">
+                <thead><tr><th>Inventory item</th><th class="r" style="width:120px">Qty</th><th>Unit</th><th class="r">Cost</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var line in recipe)
+                    {
+                        var inv = stock.FirstOrDefault(s => s.Id == line.InventoryItemId);
+                        <tr>
+                            <td>
+                                <select class="form-select form-select-sm" aria-label="Inventory item" @bind="line.InventoryItemId">
+                                    <option value="0">Pick an item…</option>
+                                    @foreach (var s in stock.OrderBy(s => s.Name)) { <option value="@s.Id">@s.Name</option> }
+                                </select>
+                            </td>
+                            <td><input class="form-control form-control-sm text-end" type="number" min="0" step="0.25" aria-label="Quantity" @bind="line.Quantity" @bind:event="oninput" /></td>
+                            <td class="small-muted">@inv?.Unit</td>
+                            <td class="r">@Fmt.Money2(line.Quantity * (inv?.UnitCost ?? 0))</td>
+                            <td><button class="btn btn-sm btn-outline-secondary" aria-label="Remove ingredient" @onclick="() => recipe.Remove(line)"><i class="bi bi-x-lg"></i></button></td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot><tr><td colspan="3">Cost per serving</td><td class="r">@Fmt.Money2(FormCost)</td><td></td></tr></tfoot>
+            </table>
+            <button class="btn btn-sm btn-outline-secondary" disabled="@(stock.Count == 0)" @onclick="() => recipe.Add(new RecipeLine())"><i class="bi bi-plus-lg"></i> Add ingredient</button>
+            @if (recipe.Count == 0)
+            {
+                <div class="mt-3" style="max-width:240px"><label class="form-label" for="m-manual">Or a manual cost per serving ($)</label>
+                    <input id="m-manual" type="number" min="0" step="0.01" class="form-control" @bind="form.ManualCost" @bind:event="oninput" /></div>
+            }
+            <div class="mt-3 small">
+                Food cost <strong class="@(FormPct > Target ? "num-over" : "num-under")">@(form.Price == 0 ? "—" : Fmt.Pct(FormPct))</strong>
+                · margin <strong>@Fmt.Money2(form.Price - FormCost)</strong> per serving
+                @if (form.Price > 0 && FormCost > 0 && FormPct > Target) { <span class="small-muted"> · a price of @Fmt.Money2(Math.Ceiling(FormCost / (decimal)(Target / 100) * 4) / 4) hits the @Fmt.Pct(Target) target</span> }
+            </div>
+        </ChildContent>
+        <Footer>
+            @if (form.Id != 0) { <button class="btn btn-outline-danger me-auto" @onclick="Delete"><i class="bi bi-trash"></i> Delete</button> }
+            <button class="btn btn-outline-secondary" @onclick="() => editing = false">Cancel</button>
+            <button class="btn btn-primary" disabled="@string.IsNullOrWhiteSpace(form.Name)" @onclick="Save"><i class="bi bi-check-lg"></i> Save item</button>
+        </Footer>
+    </Modal>
+    <ConfirmDialog @ref="confirm" />
+</BusinessShell>
+
+@code {
+    [Parameter] public int BusinessId { get; set; }
+
+    private BusinessContext ctx = default!;
+    private List<MenuItem> items = new();
+    private List<InventoryItem> stock = new();
+    private bool editing;
+    private MenuItem form = new();
+    private List<RecipeLine> recipe = new();
+    private ConfirmDialog confirm = default!;
+
+    private double Target => (double)ctx.Business.TargetFoodCostPercent;
+    private bool Over(MenuItem m) => m.Price > 0 && BusinessMetrics.FoodCostPct(m) > Target;
+    private double AvgFoodCost
+    {
+        get
+        {
+            var priced = items.Where(i => i.IsActive && i.Price > 0).ToList();
+            return priced.Count == 0 ? 0 : priced.Average(BusinessMetrics.FoodCostPct);
+        }
+    }
+    private decimal FormCost => recipe.Count > 0
+        ? recipe.Sum(l => l.Quantity * (stock.FirstOrDefault(s => s.Id == l.InventoryItemId)?.UnitCost ?? 0))
+        : form.ManualCost ?? 0;
+    private double FormPct => form.Price == 0 ? 0 : (double)(FormCost / form.Price) * 100;
+
+    private async Task Load(BusinessContext c)
+    {
+        ctx = c;
+        await Refresh();
+    }
+
+    private async Task Refresh()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        stock = await db.InventoryItems.AsNoTracking().Where(i => i.BusinessId == BusinessId).ToListAsync();
+        items = await db.MenuItems.AsNoTracking().Where(m => m.BusinessId == BusinessId).Include(m => m.Recipe).ThenInclude(r => r.InventoryItem).ToListAsync();
+    }
+
+    private void New()
+    {
+        form = new MenuItem { BusinessId = BusinessId, SortOrder = items.Count == 0 ? 0 : items.Max(i => i.SortOrder) + 1 };
+        recipe = new List<RecipeLine>();
+        editing = true;
+    }
+
+    private void Edit(MenuItem m)
+    {
+        form = new MenuItem
+        {
+            Id = m.Id, BusinessId = m.BusinessId, Name = m.Name, Category = m.Category, Price = m.Price, ManualCost = m.ManualCost,
+            IsActive = m.IsActive, SortOrder = m.SortOrder, Notes = m.Notes,
+        };
+        recipe = m.Recipe.Select(r => new RecipeLine { InventoryItemId = r.InventoryItemId, Quantity = r.Quantity }).ToList();
+        editing = true;
+    }
+
+    private async Task Save()
+    {
+        form.Name = form.Name.Trim();
+        form.Category = string.IsNullOrWhiteSpace(form.Category) ? null : form.Category.Trim();
+        var lines = recipe.Where(l => l.InventoryItemId != 0 && l.Quantity > 0 && stock.Any(s => s.Id == l.InventoryItemId))
+            .GroupBy(l => l.InventoryItemId).Select(g => new RecipeLine { InventoryItemId = g.Key, Quantity = g.Sum(l => l.Quantity) }).ToList();
+        if (lines.Count > 0) form.ManualCost = null;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (form.Id == 0) db.MenuItems.Add(form);
+        else if (await db.MenuItems.AnyAsync(x => x.Id == form.Id && x.BusinessId == BusinessId))
+        {
+            db.MenuItems.Update(form);
+            await db.RecipeLines.Where(r => r.MenuItemId == form.Id).ExecuteDeleteAsync();
+        }
+        else { Toasts.Error("That item no longer exists."); editing = false; return; }
+        await db.SaveChangesAsync();
+        foreach (var l in lines) l.MenuItemId = form.Id;
+        db.RecipeLines.AddRange(lines);
+        await db.SaveChangesAsync();
+        editing = false;
+        Toasts.Show($"Saved {form.Name}.");
+        await Refresh();
+    }
+
+    private async Task ToggleActive(MenuItem m)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.MenuItems.Where(x => x.Id == m.Id && x.BusinessId == BusinessId).ExecuteUpdateAsync(u => u.SetProperty(x => x.IsActive, !m.IsActive));
+        m.IsActive = !m.IsActive;
+    }
+
+    private async Task Delete()
+    {
+        editing = false;
+        if (!await confirm.AskAsync($"Delete {form.Name}? Past sales keep their name and price. Hiding it instead keeps it out of ring-up.", "Delete this menu item?"))
+        {
+            editing = true;
+            return;
+        }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.MenuItems.Where(x => x.Id == form.Id && x.BusinessId == BusinessId).ExecuteDeleteAsync();
+        Toasts.Show("Menu item deleted.");
+        await Refresh();
+    }
+
+    private async Task ExportCsv()
+    {
+        var csv = Csv.Build(["Item", "Category", "Price", "Cost", "Food cost %", "Margin", "Active", "Recipe"],
+            items.OrderBy(i => i.SortOrder).Select(m => new object?[] { m.Name, m.Category, m.Price, Math.Round(BusinessMetrics.RecipeCost(m), 2),
+                Math.Round(BusinessMetrics.FoodCostPct(m), 1), Math.Round(m.Price - BusinessMetrics.RecipeCost(m), 2), m.IsActive ? "yes" : "no",
+                string.Join("; ", m.Recipe.Select(r => $"{Fmt.Qty(r.Quantity)} {r.InventoryItem?.Unit} {r.InventoryItem?.Name}")) }));
+        await JS.InvokeVoidAsync("bt.download", "menu.csv", csv);
+    }
+}

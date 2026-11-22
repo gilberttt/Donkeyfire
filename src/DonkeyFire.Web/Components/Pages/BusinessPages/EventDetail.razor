@@ -1,0 +1,158 @@
+@page "/b/{BusinessId:int}/events/{EventId:int}"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject BusinessMetrics Metrics
+@inject ToastService Toasts
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>@(ev?.Name ?? "Event") · Donkey Fire</PageTitle>
+
+<BusinessShell BusinessId="BusinessId" OnLoaded="Load" Context="ctx">
+    @if (ev is null)
+    {
+        <div class="empty"><i class="bi bi-calendar-x"></i>That event doesn't exist. <a href="@($"{ctx.Base}/events")">Back to events</a></div>
+    }
+    else if (pnl is not null)
+    {
+        <div class="page-head">
+            <div>
+                <div class="eyebrow"><a href="@($"{ctx.Base}/events")">Events</a> · @Fmt.Label(ev.Kind)</div>
+                <h1 class="display-title">@ev.Name</h1>
+                <div class="small-muted mt-1">@Fmt.Days(ev.StartDate, ev.EndDate)@(string.IsNullOrWhiteSpace(ev.Location) ? "" : $" · {ev.Location}")@(string.IsNullOrWhiteSpace(ev.Contact) ? "" : $" · {ev.Contact}")
+                    <StatusPill Kind="@Events.StatusKind(ev.Status)" Text="@Fmt.Label(ev.Status)" /></div>
+            </div>
+            <div class="actions">
+                <button class="btn btn-outline-secondary" @onclick="@(() => JS.InvokeVoidAsync("bt.print"))"><i class="bi bi-printer"></i> Print</button>
+                @if (ctx.CanEdit)
+                {
+                    @if (ev.Status == EventStatus.Planned && ev.LastDate <= Today) { <button class="btn btn-outline-secondary" @onclick="MarkDone"><i class="bi bi-check2-circle"></i> Mark done</button> }
+                    <button class="btn btn-outline-secondary" @onclick="() => form.Open(ev)"><i class="bi bi-pencil"></i> Edit</button>
+                    <a class="btn btn-accent" href="@($"{ctx.Base}/sales")"><i class="bi bi-cash-coin"></i> Ring up sales</a>
+                }
+            </div>
+        </div>
+
+        <div class="kpis mb-3">
+            <Kpi Label="Net sales" Icon="bi-cash-stack" Value="@Fmt.Money(pnl.NetSales)" Sub="@(ev.SalesGoal is { } g ? $"Goal {Fmt.Money(g)}" : $"{Fmt.Qty(pnl.ItemsSold)} items")"
+                 Meter="@(ev.SalesGoal is { } goal && goal > 0 ? (double)(pnl.NetSales / goal) * 100 : null)" />
+            <Kpi Label="Net profit" Icon="bi-graph-up-arrow" Value="@Fmt.Money(pnl.NetProfit)" ValueClass="@Fmt.ProfitClass(pnl.NetProfit)" Sub="@($"{Fmt.Pct(pnl.ProfitMarginPct)} margin")" />
+            <Kpi Label="Labor" Icon="bi-people" Value="@Fmt.Money(pnl.Labor)" Sub="@($"{Fmt.Hours(pnl.LaborHours)} · {Fmt.Pct(pnl.LaborPct)} of sales")" />
+            <Kpi Label="Food cost" Icon="bi-egg-fried" Value="@Fmt.Pct(pnl.FoodCostPct)" Sub="@Fmt.Money(pnl.FoodCost)" />
+            <Kpi Label="Booth fee" Icon="bi-shop" Value="@Fmt.Money(ev.BoothFee)" Sub="@(feeRecorded ? "Recorded as expense" : ev.BoothFee > 0 ? "Not recorded yet" : null)" ValueClass="@(ev.BoothFee > 0 && !feeRecorded ? "num-risk" : "")" />
+        </div>
+
+        @if (ctx.CanEdit && ev.BoothFee > 0 && !feeRecorded)
+        {
+            <div class="alert alert-warning d-flex align-items-center gap-2 flex-wrap">
+                <span>The @Fmt.Money(ev.BoothFee) booth fee isn't in expenses yet, so profit is overstated.</span>
+                <button class="btn btn-sm btn-accent ms-auto" @onclick="RecordFee"><i class="bi bi-plus-lg"></i> Record booth fee as expense</button>
+            </div>
+        }
+
+        <div class="grid-2">
+            <div class="panel">
+                <div class="panel-head"><h2 class="section-title">Profit &amp; loss</h2></div>
+                <PnLTable P="pnl" B="ctx.Business" />
+            </div>
+            <div>
+                <div class="panel">
+                    <div class="panel-head"><h2 class="section-title">What sold</h2></div>
+                    @if (pnl.Items.Count == 0)
+                    {
+                        <div class="empty py-3"><i class="bi bi-card-list"></i>No item sales recorded for this event.</div>
+                    }
+                    else
+                    {
+                        <table class="table-bt">
+                            <thead><tr><th>Item</th><th class="r">Sold</th><th class="r">Revenue</th></tr></thead>
+                            <tbody>@foreach (var i in pnl.Items) { <tr><td>@i.Name</td><td class="r">@Fmt.Qty(i.Quantity)</td><td class="r">@Fmt.Money(i.Revenue)</td></tr> }</tbody>
+                        </table>
+                    }
+                </div>
+                <div class="panel">
+                    <div class="panel-head"><h2 class="section-title">Crew</h2><a class="small" href="@($"{ctx.Base}/employees")">Log shifts</a></div>
+                    @if (shifts.Count == 0)
+                    {
+                        <div class="empty py-3"><i class="bi bi-people"></i>No shifts logged for this event.</div>
+                    }
+                    else
+                    {
+                        <table class="table-bt">
+                            <thead><tr><th>Who</th><th>Date</th><th class="r">Hours</th><th class="r">Wages</th><th class="r">Tips</th></tr></thead>
+                            <tbody>@foreach (var s in shifts) { <tr><td>@s.Employee?.Name</td><td>@Fmt.Short(s.Date)</td><td class="r">@Fmt.Qty(s.Hours)</td><td class="r">@Fmt.Money2(s.Wages)</td><td class="r">@Fmt.Money2(s.Tips)</td></tr> }</tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="panel mt-3">
+            <div class="panel-head"><h2 class="section-title">Expenses</h2><a class="small" href="@($"{ctx.Base}/expenses")">All expenses</a></div>
+            @if (expenses.Count == 0)
+            {
+                <div class="empty py-3"><i class="bi bi-receipt"></i>No expenses linked to this event.</div>
+            }
+            else
+            {
+                <table class="table-bt">
+                    <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="r">Amount</th></tr></thead>
+                    <tbody>@foreach (var x in expenses) { <tr><td>@Fmt.Short(x.Date)</td><td>@x.Description</td><td>@Fmt.Label(x.Category)</td><td class="r">@Fmt.Money2(x.Amount)</td></tr> }</tbody>
+                </table>
+            }
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(ev.Notes))
+        {
+            <div class="panel mt-3"><div class="panel-head"><h2 class="section-title">Notes</h2></div><div class="panel-body" style="white-space:pre-wrap">@ev.Notes</div></div>
+        }
+
+        <EventForm @ref="form" BusinessId="BusinessId" OnSaved="() => Load(ctx)" OnDeleted="@(() => Nav.NavigateTo($"{ctx.Base}/events"))" />
+    }
+</BusinessShell>
+
+@code {
+    [Parameter] public int BusinessId { get; set; }
+    [Parameter] public int EventId { get; set; }
+
+    private BusinessContext ctx = default!;
+    private Event? ev;
+    private PnL? pnl;
+    private List<Shift> shifts = new();
+    private List<Expense> expenses = new();
+    private bool feeRecorded;
+    private EventForm form = default!;
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+
+    private async Task Load(BusinessContext c)
+    {
+        ctx = c;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        ev = await db.Events.AsNoTracking().FirstOrDefaultAsync(e => e.Id == EventId && e.BusinessId == BusinessId);
+        if (ev is null) return;
+        pnl = await Metrics.ForEventAsync(c.Business, ev);
+        shifts = await db.Shifts.AsNoTracking().Include(s => s.Employee).Where(s => s.BusinessId == BusinessId && s.EventId == EventId).OrderBy(s => s.Date).ToListAsync();
+        expenses = await db.Expenses.AsNoTracking().Where(x => x.BusinessId == BusinessId && x.EventId == EventId).OrderBy(x => x.Date).ToListAsync();
+        feeRecorded = expenses.Any(x => x.Category == ExpenseCategory.EventFees);
+    }
+
+    private async Task RecordFee()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.Expenses.Add(new Expense
+        {
+            BusinessId = BusinessId, EventId = ev!.Id, Category = ExpenseCategory.EventFees, Amount = ev.BoothFee,
+            Description = $"Booth fee: {ev.Name}", Date = ev.StartDate < Today ? ev.StartDate : Today,
+        });
+        await db.SaveChangesAsync();
+        Toasts.Show("Booth fee recorded.");
+        await Load(ctx);
+    }
+
+    private async Task MarkDone()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.Events.Where(e => e.Id == EventId && e.BusinessId == BusinessId).ExecuteUpdateAsync(u => u.SetProperty(e => e.Status, EventStatus.Done));
+        await Load(ctx);
+    }
+}

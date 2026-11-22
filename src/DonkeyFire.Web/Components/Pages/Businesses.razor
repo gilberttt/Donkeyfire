@@ -1,0 +1,55 @@
+@page "/"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject CurrentUser Me
+
+<PageTitle>My Businesses · Donkey Fire</PageTitle>
+
+<AppFrame>
+    <div class="page-head">
+        <div>
+            <div class="eyebrow">Donkey Fire</div>
+            <h1 class="display-title">My businesses</h1>
+        </div>
+        <div class="actions"><a class="btn btn-accent" href="/businesses/new"><i class="bi bi-plus-lg"></i> New business</a></div>
+    </div>
+
+    @if (rows is null)
+    {
+        <div class="page-loading">Loading…</div>
+    }
+    else if (rows.Count == 0)
+    {
+        <div class="panel"><div class="empty"><i class="bi bi-fire"></i>
+            <p class="mb-3">You don't have a business set up yet. Create one to start tracking sales, expenses, inventory and labor.</p>
+            <a class="btn btn-accent" href="/businesses/new"><i class="bi bi-plus-lg"></i> Set up Donkey Fire Concessions</a>
+        </div></div>
+    }
+    else
+    {
+        <div class="card-grid">
+            @foreach (var r in rows)
+            {
+                <a class="tile" href="@($"/b/{r.Business.Id}")">
+                    <div class="tile-body">
+                        <div class="tile-title"><i class="bi bi-fire" style="color:var(--bt-accent)"></i> @r.Business.Name</div>
+                        <div class="small-muted">@(string.Join(", ", new[] { r.Business.City, r.Business.State }.Where(s => !string.IsNullOrWhiteSpace(s))))</div>
+                        <div class="mt-1"><span class="pill pill-@(r.Role == BusinessRole.Owner ? "done" : "ok")">@r.Role</span></div>
+                    </div>
+                </a>
+            }
+        </div>
+    }
+</AppFrame>
+
+@code {
+    private record Row(Business Business, BusinessRole Role);
+    private List<Row>? rows;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var uid = await Me.RequireIdAsync();
+        await using var db = await DbFactory.CreateDbContextAsync();
+        rows = (await db.BusinessMembers.AsNoTracking().Where(m => m.UserId == uid).Include(m => m.Business).ToListAsync())
+            .Select(m => new Row(m.Business!, m.Role)).OrderBy(r => r.Business.Name).ToList();
+    }
+}

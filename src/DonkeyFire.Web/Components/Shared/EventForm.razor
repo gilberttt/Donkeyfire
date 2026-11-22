@@ -1,0 +1,81 @@
+@* Add/edit dialog for an event, shared by the Events list and the event page. Call Open(event). *@
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ToastService Toasts
+
+<Modal @bind-Open="open" Title="@(form.Id == 0 ? "Add event" : "Edit event")" Icon="bi-calendar-event" Size="lg">
+    <ChildContent>
+        <div class="form-grid">
+            <div class="full"><label class="form-label" for="ev-name">Event name</label><input id="ev-name" class="form-control" @bind="form.Name" @bind:event="oninput" placeholder="e.g. Eufaula Pilgrimage" /></div>
+            <div><label class="form-label" for="ev-start">Start date</label><input id="ev-start" type="date" class="form-control" @bind="form.StartDate" /></div>
+            <div><label class="form-label" for="ev-end">End date (multi-day)</label><input id="ev-end" type="date" class="form-control" @bind="form.EndDate" /></div>
+            <div><label class="form-label" for="ev-kind">Type</label>
+                <select id="ev-kind" class="form-select" @bind="form.Kind">@foreach (var k in Enum.GetValues<EventKind>()) { <option value="@k">@Fmt.Label(k)</option> }</select></div>
+            <div><label class="form-label" for="ev-status">Status</label>
+                <select id="ev-status" class="form-select" @bind="form.Status">@foreach (var s in Enum.GetValues<EventStatus>()) { <option value="@s">@Fmt.Label(s)</option> }</select></div>
+            <div><label class="form-label" for="ev-loc">Location</label><input id="ev-loc" class="form-control" @bind="form.Location" /></div>
+            <div><label class="form-label" for="ev-contact">Organizer contact</label><input id="ev-contact" class="form-control" @bind="form.Contact" /></div>
+            <div><label class="form-label" for="ev-fee">Booth / space fee ($)</label><input id="ev-fee" type="number" min="0" step="1" class="form-control" @bind="form.BoothFee" /></div>
+            <div><label class="form-label" for="ev-comm">Organizer's cut of sales (%)</label><input id="ev-comm" type="number" min="0" max="100" step="0.5" class="form-control" @bind="form.CommissionPercent" /></div>
+            <div><label class="form-label" for="ev-goal">Sales goal ($)</label><input id="ev-goal" type="number" min="0" step="50" class="form-control" @bind="form.SalesGoal" /></div>
+            <div class="full"><label class="form-label" for="ev-notes">Notes</label><textarea id="ev-notes" class="form-control" rows="3" @bind="form.Notes" placeholder="Load-in time, power, parking, what sold out last year"></textarea></div>
+        </div>
+        <p class="small-muted mt-3 mb-0">The booth fee here is the agreed amount. When you pay it, record it as an expense (the event page has a button for that) so it counts in profit once.</p>
+    </ChildContent>
+    <Footer>
+        @if (form.Id != 0) { <button class="btn btn-outline-danger me-auto" @onclick="Delete"><i class="bi bi-trash"></i> Delete</button> }
+        <button class="btn btn-outline-secondary" @onclick="() => open = false">Cancel</button>
+        <button class="btn btn-primary" disabled="@string.IsNullOrWhiteSpace(form.Name)" @onclick="Save"><i class="bi bi-check-lg"></i> Save event</button>
+    </Footer>
+</Modal>
+<ConfirmDialog @ref="confirm" />
+
+@code {
+    [Parameter, EditorRequired] public int BusinessId { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback OnDeleted { get; set; }
+
+    private bool open;
+    private Event form = new();
+    private ConfirmDialog confirm = default!;
+
+    public void Open(Event e)
+    {
+        form = new Event
+        {
+            Id = e.Id, BusinessId = BusinessId, Name = e.Name, Kind = e.Kind, Status = e.Status, StartDate = e.StartDate, EndDate = e.EndDate,
+            Location = e.Location, Contact = e.Contact, BoothFee = e.BoothFee, CommissionPercent = e.CommissionPercent, SalesGoal = e.SalesGoal,
+            Notes = e.Notes, CreatedAt = e.CreatedAt,
+        };
+        open = true;
+        StateHasChanged();
+    }
+
+    private async Task Save()
+    {
+        form.Name = form.Name.Trim();
+        if (form.EndDate is { } end && end <= form.StartDate) form.EndDate = null;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (form.Id == 0) db.Events.Add(form);
+        else if (await db.Events.AnyAsync(x => x.Id == form.Id && x.BusinessId == BusinessId)) db.Events.Update(form);
+        else { Toasts.Error("That event no longer exists."); open = false; return; }
+        await db.SaveChangesAsync();
+        open = false;
+        Toasts.Show($"Saved {form.Name}.");
+        await OnSaved.InvokeAsync();
+    }
+
+    private async Task Delete()
+    {
+        open = false;
+        if (!await confirm.AskAsync($"Delete {form.Name}? Sales, expenses and shifts recorded against it are kept, just no longer linked to an event.", "Delete this event?"))
+        {
+            open = true;
+            return;
+        }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.Events.Where(x => x.Id == form.Id && x.BusinessId == BusinessId).ExecuteDeleteAsync();
+        Toasts.Show("Event deleted.");
+        if (OnDeleted.HasDelegate) await OnDeleted.InvokeAsync();
+        else await OnSaved.InvokeAsync();
+    }
+}

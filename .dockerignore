@@ -1,0 +1,15 @@
+**/bin/
+**/obj/
+**/App_Data/
+**/*.db
+**/*.db-shm
+**/*.db-wal
+.git/
+.vs/
+.vscode/
+.claude/
+tests/
+docs/
+*.md
+Dockerfile
+fly.toml

@@ -1,0 +1,83 @@
+@inject IJSRuntime JS
+
+<div class="app">
+    <aside class="app-nav" aria-label="Main navigation">
+        <a class="brand" href="/"><span class="brand-mark"><i class="bi bi-fire"></i></span>Donkey Fire</a>
+        @if (Business is not null)
+        {
+            <div class="nav-project">
+                <div class="name">@Business.Name</div>
+                <div class="addr">@(string.Join(", ", new[] { Business.City, Business.State }.Where(s => !string.IsNullOrWhiteSpace(s))))</div>
+            </div>
+            var b = $"/b/{Business.Id}";
+            <nav @onclick="CloseNav">
+                <div class="nav-group">
+                    <div class="nav-group-label">Money</div>
+                    <NavLink class="nav-link-bt" href="@b" Match="NavLinkMatch.All"><i class="bi bi-speedometer2"></i>Dashboard</NavLink>
+                    <NavLink class="nav-link-bt" href="@($"{b}/sales")"><i class="bi bi-cash-coin"></i>Sales</NavLink>
+                    <NavLink class="nav-link-bt" href="@($"{b}/expenses")"><i class="bi bi-receipt"></i>Expenses</NavLink>
+                    <NavLink class="nav-link-bt" href="@($"{b}/events")"><i class="bi bi-calendar-event"></i>Events</NavLink>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-group-label">Kitchen</div>
+                    <NavLink class="nav-link-bt" href="@($"{b}/menu")"><i class="bi bi-card-list"></i>Menu &amp; Recipes</NavLink>
+                    <NavLink class="nav-link-bt" href="@($"{b}/inventory")"><i class="bi bi-boxes"></i>Inventory</NavLink>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-group-label">Crew</div>
+                    <NavLink class="nav-link-bt" href="@($"{b}/employees")"><i class="bi bi-people"></i>Employees &amp; Shifts</NavLink>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-group-label">More</div>
+                    <NavLink class="nav-link-bt" href="@($"{b}/settings")"><i class="bi bi-gear"></i>Settings</NavLink>
+                    <NavLink class="nav-link-bt" href="/" Match="NavLinkMatch.All"><i class="bi bi-collection"></i>All Businesses</NavLink>
+                </div>
+            </nav>
+        }
+        else
+        {
+            <nav class="nav-group">
+                <NavLink class="nav-link-bt" href="/" Match="NavLinkMatch.All"><i class="bi bi-collection"></i>My Businesses</NavLink>
+                <NavLink class="nav-link-bt" href="/businesses/new"><i class="bi bi-plus-circle"></i>New Business</NavLink>
+            </nav>
+        }
+        <AuthorizeView>
+            <div class="nav-foot">
+                <span class="avatar">
+                    @if (context.User.FindFirst("picture")?.Value is { } pic)
+                    {
+                        <img src="@pic" alt="" referrerpolicy="no-referrer" />
+                    }
+                    else
+                    {
+                        @Initials(context.User.Identity?.Name)
+                    }
+                </span>
+                <span class="text-truncate" style="min-width:0">@context.User.Identity?.Name</span>
+                <form method="post" action="/auth/logout" class="ms-auto">
+                    <button class="btn btn-sm btn-link text-light p-0" title="Sign out" aria-label="Sign out"><i class="bi bi-box-arrow-right"></i></button>
+                </form>
+            </div>
+        </AuthorizeView>
+    </aside>
+    <div class="app-main">
+        <div class="topbar">
+            <button type="button" aria-label="Open menu" @onclick="OpenNav"><i class="bi bi-list"></i></button>
+            <span class="title">@(Business?.Name ?? "Donkey Fire")</span>
+        </div>
+        <div class="page-body">
+            @ChildContent
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public Business? Business { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private async Task OpenNav() => await JS.InvokeVoidAsync("bt.toggleNav", true);
+    private async Task CloseNav() => await JS.InvokeVoidAsync("bt.toggleNav", false);
+
+    private static string Initials(string? name) =>
+        string.Concat((name ?? "?").Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(p => char.ToUpperInvariant(p[0])));
+}

@@ -1,0 +1,31 @@
+@if (Href is null)
+{
+    <div class="kpi" title="@Hint">@Body()</div>
+}
+else
+{
+    <a class="kpi" href="@Href" title="@Hint">@Body()</a>
+}
+
+@code {
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public string? Icon { get; set; }
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public string? ValueClass { get; set; }
+    [Parameter] public string? Sub { get; set; }
+    [Parameter] public string? Hint { get; set; }
+    [Parameter] public string? Href { get; set; }
+    /// <summary>0–100 to show a meter under the value.</summary>
+    [Parameter] public double? Meter { get; set; }
+    [Parameter] public string? MeterColor { get; set; }
+
+    private RenderFragment Body() => @<text>
+        <span class="label">@if (Icon is not null) { <i class="bi @Icon"></i> }@Label</span>
+        <span class="value @ValueClass">@Value</span>
+        @if (Meter is { } m)
+        {
+            <span class="meter"><b style="width:@(Math.Clamp(m, 0, 100).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))%;@(MeterColor is null ? "" : $"background:{MeterColor}")"></b></span>
+        }
+        @if (Sub is not null) { <span class="sub">@Sub</span> }
+    </text>;
+}

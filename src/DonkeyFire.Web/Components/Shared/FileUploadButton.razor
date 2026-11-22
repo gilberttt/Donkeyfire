@@ -1,0 +1,54 @@
+@* Uploads one or more files into the business's file store and reports each StoredFile. *@
+@inject FileStorage Storage
+@inject CurrentUser Me
+@inject ToastService Toasts
+
+<label class="btn @ButtonClass @(busy ? "disabled" : "")" style="position:relative">
+    @if (busy)
+    {
+        <span class="spinner-border spinner-border-sm"></span> <span>Uploading…</span>
+    }
+    else
+    {
+        <i class="bi @Icon"></i> <span>@Text</span>
+    }
+    <InputFile OnChange="OnChange" multiple="@Multiple" accept="@Accept" capture="@Capture"
+               style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%" disabled="@busy" />
+</label>
+
+@code {
+    [Parameter, EditorRequired] public int BusinessId { get; set; }
+    [Parameter] public string Text { get; set; } = "Upload";
+    [Parameter] public string Icon { get; set; } = "bi-upload";
+    [Parameter] public string ButtonClass { get; set; } = "btn-outline-secondary";
+    [Parameter] public string? Accept { get; set; }
+    /// <summary>"environment" opens the rear camera on phones.</summary>
+    [Parameter] public string? Capture { get; set; }
+    [Parameter] public bool Multiple { get; set; }
+    [Parameter] public EventCallback<StoredFile> OnUploaded { get; set; }
+
+    private bool busy;
+
+    private async Task OnChange(InputFileChangeEventArgs e)
+    {
+        busy = true;
+        try
+        {
+            var uid = await Me.GetIdAsync();
+            foreach (var f in e.GetMultipleFiles(50))
+            {
+                await using var stream = f.OpenReadStream(FileStorage.MaxUploadBytes);
+                var stored = await Storage.SaveAsync(BusinessId, stream, f.Name, f.ContentType, uid);
+                await OnUploaded.InvokeAsync(stored);
+            }
+        }
+        catch (IOException ex)
+        {
+            Toasts.Error($"Upload failed: {ex.Message}. Files must be under {Fmt.Size(FileStorage.MaxUploadBytes)}.");
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

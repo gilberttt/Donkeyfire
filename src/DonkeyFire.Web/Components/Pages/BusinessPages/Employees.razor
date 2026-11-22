@@ -1,0 +1,388 @@
+@page "/b/{BusinessId:int}/employees"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ToastService Toasts
+@inject IJSRuntime JS
+
+<PageTitle>Employees &amp; Shifts · Donkey Fire</PageTitle>
+
+<BusinessShell BusinessId="BusinessId" OnLoaded="Load" Context="ctx">
+    <div class="page-head">
+        <div>
+            <div class="eyebrow">Crew</div>
+            <h1 class="display-title">Employees &amp; shifts</h1>
+        </div>
+        <div class="actions">
+            @if (tab == "shifts") { <button class="btn btn-outline-secondary" @onclick="ExportCsv"><i class="bi bi-download"></i> CSV</button> }
+            @if (ctx.CanEdit)
+            {
+                <button class="btn btn-outline-secondary" @onclick="NewEmployee"><i class="bi bi-person-plus"></i> Add employee</button>
+                <button class="btn btn-accent" disabled="@(!employees.Any(e => e.IsActive))" @onclick="NewShift"><i class="bi bi-plus-lg"></i> Log shifts</button>
+            }
+        </div>
+    </div>
+
+    <div class="kpis mb-3">
+        <Kpi Label="Wages" Icon="bi-cash" Value="@Fmt.Money(shifts.Sum(s => s.Wages))" Sub="@period.Label" />
+        <Kpi Label="With payroll burden" Icon="bi-bank" Value="@Fmt.Money(shifts.Sum(s => s.Wages) * (1 + ctx.Business.LaborBurdenPercent / 100))" Sub="@($"{Fmt.Qty(ctx.Business.LaborBurdenPercent)}% burden")" />
+        <Kpi Label="Hours" Icon="bi-stopwatch" Value="@Fmt.Hours(shifts.Sum(s => s.Hours))" />
+        <Kpi Label="Tips paid out" Icon="bi-piggy-bank" Value="@Fmt.Money(shifts.Sum(s => s.Tips))" />
+        <Kpi Label="Unpaid" Icon="bi-hourglass-split" Value="@Fmt.Money(unpaid.Sum(s => s.Wages + s.Tips))" ValueClass="@(unpaid.Count > 0 ? "num-risk" : "")" Sub="All time" />
+    </div>
+
+    <div class="tabs" role="tablist">
+        <button type="button" role="tab" aria-selected="@(tab == "shifts")" class="@(tab == "shifts" ? "active" : "")" @onclick="@(() => tab = "shifts")"><i class="bi bi-calendar3"></i> Shifts</button>
+        <button type="button" role="tab" aria-selected="@(tab == "pay")" class="@(tab == "pay" ? "active" : "")" @onclick="@(() => tab = "pay")"><i class="bi bi-wallet2"></i> To pay (@unpaid.Select(s => s.EmployeeId).Distinct().Count())</button>
+        <button type="button" role="tab" aria-selected="@(tab == "people")" class="@(tab == "people" ? "active" : "")" @onclick="@(() => tab = "people")"><i class="bi bi-people"></i> Employees (@employees.Count(e => e.IsActive))</button>
+    </div>
+
+    @if (tab == "shifts")
+    {
+        <div class="panel">
+            <div class="panel-head">
+                <div class="d-flex flex-wrap gap-2">
+                    <label class="visually-hidden" for="sh-period">Period</label>
+                    <select id="sh-period" class="form-select form-select-sm" style="width:auto" value="@preset" @onchange="ChangePeriod">
+                        @foreach (var (key, label) in Period.Presets) { <option value="@key">@label</option> }
+                    </select>
+                    <label class="visually-hidden" for="sh-emp">Employee</label>
+                    <select id="sh-emp" class="form-select form-select-sm" style="width:auto" @bind="empFilter">
+                        <option value="0">Everyone</option>
+                        @foreach (var e in employees.OrderBy(e => e.Name)) { <option value="@e.Id">@e.Name</option> }
+                    </select>
+                </div>
+            </div>
+            @if (FilteredShifts.Count == 0)
+            {
+                <div class="empty"><i class="bi bi-calendar3"></i>No shifts in this period.</div>
+            }
+            else
+            {
+                <div class="table-wrap">
+                    <table class="table-bt">
+                        <thead><tr><th>Date</th><th>Employee</th><th>Event</th><th class="r">Hours</th><th class="r">Rate</th><th class="r">Wages</th><th class="r">Tips</th><th>Paid</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var s in FilteredShifts)
+                            {
+                                <tr>
+                                    <td class="text-nowrap">@Fmt.Short(s.Date)</td>
+                                    <td>@s.Employee?.Name@if (!string.IsNullOrWhiteSpace(s.Notes)) { <div class="small-muted">@s.Notes</div> }</td>
+                                    <td>@EventName(s.EventId)</td>
+                                    <td class="r">@Fmt.Qty(s.Hours)</td>
+                                    <td class="r">@Fmt.Money2(s.HourlyRate)@(s.FlatPay != 0 ? $" + {Fmt.Money(s.FlatPay)}" : "")</td>
+                                    <td class="r">@Fmt.Money2(s.Wages)</td>
+                                    <td class="r">@Fmt.Money2(s.Tips)</td>
+                                    <td>
+                                        @if (ctx.CanEdit)
+                                        {
+                                            <button class="btn btn-sm @(s.IsPaid ? "btn-outline-secondary" : "btn-outline-warning")" @onclick="() => TogglePaid(s)" aria-pressed="@s.IsPaid">@(s.IsPaid ? "Paid" : "Unpaid")</button>
+                                        }
+                                        else { <StatusPill Kind="@(s.IsPaid ? "done" : "active")" Text="@(s.IsPaid ? "Paid" : "Unpaid")" /> }
+                                    </td>
+                                    <td class="row-actions text-nowrap">
+                                        @if (ctx.CanEdit)
+                                        {
+                                            <button class="btn btn-sm btn-outline-secondary" title="Edit" aria-label="Edit shift" @onclick="() => EditShift(s)"><i class="bi bi-pencil"></i></button>
+                                            <button class="btn btn-sm btn-outline-secondary" title="Delete" aria-label="Delete shift" @onclick="() => DeleteShift(s)"><i class="bi bi-trash"></i></button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot><tr><td colspan="3">Total</td><td class="r">@Fmt.Qty(FilteredShifts.Sum(s => s.Hours))</td><td></td><td class="r">@Fmt.Money2(FilteredShifts.Sum(s => s.Wages))</td><td class="r">@Fmt.Money2(FilteredShifts.Sum(s => s.Tips))</td><td colspan="2"></td></tr></tfoot>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+    else if (tab == "pay")
+    {
+        <div class="panel">
+            @if (unpaid.Count == 0)
+            {
+                <div class="empty"><i class="bi bi-check2-circle"></i>Everyone's paid up.</div>
+            }
+            else
+            {
+                <table class="table-bt">
+                    <thead><tr><th>Employee</th><th class="r">Shifts</th><th class="r">Hours</th><th class="r">Wages</th><th class="r">Tips</th><th class="r">Owed</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var g in unpaid.GroupBy(s => s.EmployeeId))
+                        {
+                            var emp = employees.FirstOrDefault(e => e.Id == g.Key);
+                            <tr>
+                                <td><strong>@emp?.Name</strong><div class="small-muted">@Fmt.Short(g.Min(s => s.Date)) – @Fmt.Short(g.Max(s => s.Date))</div></td>
+                                <td class="r">@g.Count()</td><td class="r">@Fmt.Qty(g.Sum(s => s.Hours))</td><td class="r">@Fmt.Money2(g.Sum(s => s.Wages))</td>
+                                <td class="r">@Fmt.Money2(g.Sum(s => s.Tips))</td><td class="r"><strong>@Fmt.Money2(g.Sum(s => s.Wages + s.Tips))</strong></td>
+                                <td class="row-actions">@if (ctx.CanEdit) { <button class="btn btn-sm btn-accent" @onclick="() => PayAll(g.Key, emp?.Name)"><i class="bi bi-check-lg"></i> Mark paid</button> }</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+        <p class="small-muted mt-2">This tracks what you owe the crew. It doesn't run payroll or withhold taxes.</p>
+    }
+    else
+    {
+        <div class="panel">
+            @if (employees.Count == 0)
+            {
+                <div class="empty"><i class="bi bi-people"></i>No employees yet. Add your crew with their hourly rate, then log shifts.</div>
+            }
+            else
+            {
+                <table class="table-bt">
+                    <thead><tr><th>Name</th><th>Position</th><th>Phone</th><th>Email</th><th class="r">Rate</th><th class="r">Hours (period)</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var e in employees.OrderBy(e => !e.IsActive).ThenBy(e => e.Name))
+                        {
+                            <tr class="@(e.IsActive ? "" : "text-muted")">
+                                <td><strong>@e.Name</strong>@if (!e.IsActive) { <span class="pill pill-pending ms-1">Inactive</span> }</td>
+                                <td>@e.Position</td>
+                                <td>@if (!string.IsNullOrWhiteSpace(e.Phone)) { <a href="@($"tel:{e.Phone}")">@e.Phone</a> }</td>
+                                <td>@if (!string.IsNullOrWhiteSpace(e.Email)) { <a href="@($"mailto:{e.Email}")">@e.Email</a> }</td>
+                                <td class="r">@Fmt.Money2(e.HourlyRate)</td>
+                                <td class="r">@Fmt.Qty(shifts.Where(s => s.EmployeeId == e.Id).Sum(s => s.Hours))</td>
+                                <td class="row-actions">@if (ctx.CanEdit) { <button class="btn btn-sm btn-outline-secondary" title="Edit" aria-label="Edit @e.Name" @onclick="() => EditEmployee(e)"><i class="bi bi-pencil"></i></button> }</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    }
+
+    <Modal @bind-Open="empOpen" Title="@(empForm.Id == 0 ? "Add employee" : "Edit employee")" Icon="bi-person">
+        <ChildContent>
+            <div class="form-grid">
+                <div class="full"><label class="form-label" for="e-name">Name</label><input id="e-name" class="form-control" @bind="empForm.Name" @bind:event="oninput" /></div>
+                <div><label class="form-label" for="e-pos">Position</label><input id="e-pos" class="form-control" @bind="empForm.Position" placeholder="Cook, window, cashier…" /></div>
+                <div><label class="form-label" for="e-rate">Hourly rate ($)</label><input id="e-rate" type="number" min="0" step="0.25" class="form-control" @bind="empForm.HourlyRate" /></div>
+                <div><label class="form-label" for="e-phone">Phone</label><input id="e-phone" type="tel" class="form-control" @bind="empForm.Phone" /></div>
+                <div><label class="form-label" for="e-email">Email</label><input id="e-email" type="email" class="form-control" @bind="empForm.Email" /></div>
+                <div class="full form-check ms-1"><input id="e-active" type="checkbox" class="form-check-input" @bind="empForm.IsActive" /><label class="form-check-label" for="e-active">Active (shows up when logging shifts)</label></div>
+                <div class="full"><label class="form-label" for="e-notes">Notes</label><textarea id="e-notes" class="form-control" rows="2" @bind="empForm.Notes"></textarea></div>
+            </div>
+            @if (empForm.Id != 0) { <p class="small-muted mt-3 mb-0">Changing the rate affects new shifts only.</p> }
+        </ChildContent>
+        <Footer>
+            @if (empForm.Id != 0) { <button class="btn btn-outline-danger me-auto" @onclick="DeleteEmployee"><i class="bi bi-trash"></i> Delete</button> }
+            <button class="btn btn-outline-secondary" @onclick="() => empOpen = false">Cancel</button>
+            <button class="btn btn-primary" disabled="@string.IsNullOrWhiteSpace(empForm.Name)" @onclick="SaveEmployee"><i class="bi bi-check-lg"></i> Save</button>
+        </Footer>
+    </Modal>
+
+    <Modal @bind-Open="shiftOpen" Title="@(shiftForm.Id == 0 ? "Log shifts" : "Edit shift")" Icon="bi-calendar3" Size="lg">
+        <ChildContent>
+            <div class="form-grid">
+                @if (shiftForm.Id == 0)
+                {
+                    <div class="full">
+                        <span class="form-label d-block">Who worked</span>
+                        <div class="d-flex flex-wrap gap-2">
+                            @foreach (var e in employees.Where(e => e.IsActive).OrderBy(e => e.Name))
+                            {
+                                var on = picked.Contains(e.Id);
+                                <button type="button" class="btn btn-sm @(on ? "btn-primary" : "btn-outline-secondary")" aria-pressed="@on" @onclick="() => { if (!picked.Remove(e.Id)) picked.Add(e.Id); }">
+                                    <i class="bi @(on ? "bi-check-lg" : "bi-person")"></i> @e.Name <span class="small opacity-75">@Fmt.Money2(e.HourlyRate)/h</span>
+                                </button>
+                            }
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div><label class="form-label" for="sh-femp">Employee</label>
+                        <select id="sh-femp" class="form-select" @bind="shiftForm.EmployeeId">@foreach (var e in employees) { <option value="@e.Id">@e.Name</option> }</select></div>
+                    <div><label class="form-label" for="sh-rate">Hourly rate ($)</label><input id="sh-rate" type="number" min="0" step="0.25" class="form-control" @bind="shiftForm.HourlyRate" /></div>
+                }
+                <div><label class="form-label" for="sh-date">Date</label><input id="sh-date" type="date" class="form-control" @bind="shiftForm.Date" /></div>
+                <div><label class="form-label" for="sh-event">Event</label><EventSelect Id="sh-event" Events="events" @bind-Value="shiftForm.EventId" /></div>
+                <div><label class="form-label" for="sh-hours">Hours</label><input id="sh-hours" type="number" min="0" step="0.25" class="form-control" @bind="shiftForm.Hours" /></div>
+                <div><label class="form-label" for="sh-flat">Flat pay ($, day rate or bonus)</label><input id="sh-flat" type="number" min="0" step="1" class="form-control" @bind="shiftForm.FlatPay" /></div>
+                <div><label class="form-label" for="sh-tips">Tips paid out ($@(shiftForm.Id == 0 ? " each" : ""))</label><input id="sh-tips" type="number" min="0" step="1" class="form-control" @bind="shiftForm.Tips" /></div>
+                <div class="d-flex align-items-end"><div class="form-check"><input id="sh-paid" type="checkbox" class="form-check-input" @bind="shiftForm.IsPaid" /><label class="form-check-label" for="sh-paid">Already paid</label></div></div>
+                <div class="full"><label class="form-label" for="sh-notes">Notes</label><input id="sh-notes" class="form-control" @bind="shiftForm.Notes" /></div>
+            </div>
+            <p class="small-muted mt-3 mb-0">Tips come out of the tip jar, not the business, so they're tracked but not counted as labor cost.</p>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-outline-secondary" @onclick="() => shiftOpen = false">Cancel</button>
+            <button class="btn btn-primary" disabled="@(shiftForm.Id == 0 ? picked.Count == 0 : shiftForm.EmployeeId == 0)" @onclick="SaveShift">
+                <i class="bi bi-check-lg"></i> @(shiftForm.Id == 0 && picked.Count > 1 ? $"Log {picked.Count} shifts" : "Save shift")
+            </button>
+        </Footer>
+    </Modal>
+    <ConfirmDialog @ref="confirm" />
+</BusinessShell>
+
+@code {
+    [Parameter] public int BusinessId { get; set; }
+
+    private BusinessContext ctx = default!;
+    private string tab = "shifts";
+    private string preset = "month";
+    private Period period = Period.FromPreset("month", Today);
+    private List<Employee> employees = new();
+    private List<Event> events = new();
+    private List<Shift> shifts = new();
+    private List<Shift> unpaid = new();
+    private int empFilter;
+    private bool empOpen, shiftOpen;
+    private Employee empForm = new();
+    private Shift shiftForm = new();
+    private readonly HashSet<int> picked = new();
+    private ConfirmDialog confirm = default!;
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+    private string? EventName(int? id) => id is null ? null : events.FirstOrDefault(e => e.Id == id)?.Name;
+    private List<Shift> FilteredShifts => shifts.Where(s => empFilter == 0 || s.EmployeeId == empFilter).ToList();
+
+    private async Task Load(BusinessContext c)
+    {
+        ctx = c;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        events = await db.Events.AsNoTracking().Where(e => e.BusinessId == BusinessId).ToListAsync();
+        await Refresh();
+        if (employees.Count == 0) tab = "people";
+    }
+
+    private async Task Refresh()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        employees = await db.Employees.AsNoTracking().Where(e => e.BusinessId == BusinessId).ToListAsync();
+        shifts = await db.Shifts.AsNoTracking().Include(s => s.Employee).Where(s => s.BusinessId == BusinessId && s.Date >= period.From && s.Date <= period.To)
+            .OrderByDescending(s => s.Date).ThenBy(s => s.EmployeeId).ToListAsync();
+        unpaid = await db.Shifts.AsNoTracking().Where(s => s.BusinessId == BusinessId && !s.IsPaid).ToListAsync();
+    }
+
+    private async Task ChangePeriod(ChangeEventArgs e)
+    {
+        preset = e.Value?.ToString() ?? "month";
+        period = Period.FromPreset(preset, Today);
+        await Refresh();
+    }
+
+    private void NewEmployee()
+    {
+        empForm = new Employee { BusinessId = BusinessId };
+        empOpen = true;
+    }
+
+    private void EditEmployee(Employee e)
+    {
+        empForm = new Employee
+        {
+            Id = e.Id, BusinessId = e.BusinessId, Name = e.Name, Position = e.Position, Phone = e.Phone, Email = e.Email, HourlyRate = e.HourlyRate,
+            IsActive = e.IsActive, Notes = e.Notes,
+        };
+        empOpen = true;
+    }
+
+    private async Task SaveEmployee()
+    {
+        empForm.Name = empForm.Name.Trim();
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (empForm.Id == 0) db.Employees.Add(empForm);
+        else if (await db.Employees.AnyAsync(x => x.Id == empForm.Id && x.BusinessId == BusinessId)) db.Employees.Update(empForm);
+        else { Toasts.Error("That employee no longer exists."); empOpen = false; return; }
+        await db.SaveChangesAsync();
+        empOpen = false;
+        Toasts.Show($"Saved {empForm.Name}.");
+        await Refresh();
+    }
+
+    private async Task DeleteEmployee()
+    {
+        empOpen = false;
+        var count = await CountShifts(empForm.Id);
+        if (!await confirm.AskAsync(count == 0 ? $"Delete {empForm.Name}?" : $"Delete {empForm.Name} and their {count} logged shifts? That removes their labor cost from past results. Marking them inactive keeps the history.", "Delete this employee?"))
+        {
+            empOpen = true;
+            return;
+        }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.Employees.Where(x => x.Id == empForm.Id && x.BusinessId == BusinessId).ExecuteDeleteAsync();
+        Toasts.Show("Employee deleted.");
+        await Refresh();
+    }
+
+    private async Task<int> CountShifts(int employeeId)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        return await db.Shifts.CountAsync(s => s.EmployeeId == employeeId && s.BusinessId == BusinessId);
+    }
+
+    private void NewShift()
+    {
+        var running = events.FirstOrDefault(e => e.StartDate <= Today && e.LastDate >= Today);
+        shiftForm = new Shift { BusinessId = BusinessId, EventId = running?.Id };
+        picked.Clear();
+        shiftOpen = true;
+    }
+
+    private void EditShift(Shift s)
+    {
+        shiftForm = new Shift
+        {
+            Id = s.Id, BusinessId = s.BusinessId, EmployeeId = s.EmployeeId, Date = s.Date, EventId = s.EventId, Hours = s.Hours, HourlyRate = s.HourlyRate,
+            FlatPay = s.FlatPay, Tips = s.Tips, IsPaid = s.IsPaid, Notes = s.Notes,
+        };
+        shiftOpen = true;
+    }
+
+    private async Task SaveShift()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (shiftForm.Id == 0)
+        {
+            foreach (var id in picked)
+            {
+                var emp = employees.First(e => e.Id == id);
+                db.Shifts.Add(new Shift
+                {
+                    BusinessId = BusinessId, EmployeeId = id, Date = shiftForm.Date, EventId = shiftForm.EventId, Hours = shiftForm.Hours, HourlyRate = emp.HourlyRate,
+                    FlatPay = shiftForm.FlatPay, Tips = shiftForm.Tips, IsPaid = shiftForm.IsPaid, Notes = string.IsNullOrWhiteSpace(shiftForm.Notes) ? null : shiftForm.Notes.Trim(),
+                });
+            }
+        }
+        else if (await db.Shifts.AnyAsync(x => x.Id == shiftForm.Id && x.BusinessId == BusinessId)) db.Shifts.Update(shiftForm);
+        else { Toasts.Error("That shift no longer exists."); shiftOpen = false; return; }
+        await db.SaveChangesAsync();
+        shiftOpen = false;
+        Toasts.Show(shiftForm.Id == 0 ? $"Logged {picked.Count} shift{(picked.Count == 1 ? "" : "s")}." : "Shift saved.");
+        await Refresh();
+    }
+
+    private async Task TogglePaid(Shift s)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.Shifts.Where(x => x.Id == s.Id && x.BusinessId == BusinessId).ExecuteUpdateAsync(u => u.SetProperty(x => x.IsPaid, !s.IsPaid));
+        await Refresh();
+    }
+
+    private async Task PayAll(int employeeId, string? name)
+    {
+        if (!await confirm.AskAsync($"Mark all of {name}'s unpaid shifts as paid?", "Mark paid?", "Mark paid")) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.Shifts.Where(x => x.EmployeeId == employeeId && x.BusinessId == BusinessId && !x.IsPaid).ExecuteUpdateAsync(u => u.SetProperty(x => x.IsPaid, true));
+        Toasts.Show($"{name} is paid up.");
+        await Refresh();
+    }
+
+    private async Task DeleteShift(Shift s)
+    {
+        if (!await confirm.AskAsync($"Delete {s.Employee?.Name}'s shift on {Fmt.Date(s.Date)}?")) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.Shifts.Where(x => x.Id == s.Id && x.BusinessId == BusinessId).ExecuteDeleteAsync();
+        Toasts.Show("Shift deleted.");
+        await Refresh();
+    }
+
+    private async Task ExportCsv()
+    {
+        var csv = Csv.Build(["Date", "Employee", "Event", "Hours", "Rate", "Flat pay", "Wages", "Tips", "Paid", "Notes"],
+            FilteredShifts.Select(s => new object?[] { s.Date, s.Employee?.Name, EventName(s.EventId), s.Hours, s.HourlyRate, s.FlatPay, s.Wages, s.Tips, s.IsPaid ? "yes" : "no", s.Notes }));
+        await JS.InvokeVoidAsync("bt.download", $"shifts-{preset}-{Today:yyyyMMdd}.csv", csv);
+    }
+}

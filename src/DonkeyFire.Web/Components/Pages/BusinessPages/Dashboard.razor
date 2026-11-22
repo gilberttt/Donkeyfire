@@ -1,0 +1,174 @@
+@page "/b/{BusinessId:int}"
+@inject BusinessMetrics Metrics
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IJSRuntime JS
+
+<PageTitle>Dashboard · Donkey Fire</PageTitle>
+
+<BusinessShell BusinessId="BusinessId" OnLoaded="Load" Context="ctx">
+    <div class="page-head">
+        <div>
+            <div class="eyebrow">@ctx.Business.Name</div>
+            <h1 class="display-title">Dashboard</h1>
+        </div>
+        <div class="actions">
+            <label class="visually-hidden" for="db-period">Period</label>
+            <select id="db-period" class="form-select" style="width:auto" value="@preset" @onchange="ChangePeriod">
+                @foreach (var (key, label) in Period.Presets) { <option value="@key">@label</option> }
+            </select>
+            <button class="btn btn-outline-secondary" @onclick="ExportCsv"><i class="bi bi-download"></i> CSV</button>
+            <button class="btn btn-outline-secondary" @onclick="@(() => JS.InvokeVoidAsync("bt.print"))"><i class="bi bi-printer"></i> Print</button>
+            @if (ctx.CanEdit) { <a class="btn btn-accent" href="@($"{ctx.Base}/sales")"><i class="bi bi-plus-lg"></i> Ring up sales</a> }
+        </div>
+    </div>
+
+    @if (snap is null)
+    {
+        <div class="page-loading">Loading…</div>
+    }
+    else
+    {
+        var p = snap.PnL;
+        var target = (double)ctx.Business.TargetFoodCostPercent;
+        <div class="kpis mb-3">
+            <Kpi Label="Net sales" Icon="bi-cash-stack" Value="@Fmt.Money(p.NetSales)" Sub="@($"{Fmt.Money(p.GrossSales)} gross · {Fmt.Qty(p.ItemsSold)} items")" Href="@($"{ctx.Base}/sales")" />
+            <Kpi Label="Net profit" Icon="bi-graph-up-arrow" Value="@Fmt.Money(p.NetProfit)" ValueClass="@Fmt.ProfitClass(p.NetProfit)" Sub="@($"{Fmt.Pct(p.ProfitMarginPct)} margin")" />
+            <Kpi Label="Expenses" Icon="bi-receipt" Value="@Fmt.Money(p.Expenses)" Href="@($"{ctx.Base}/expenses")" />
+            <Kpi Label="Labor" Icon="bi-people" Value="@Fmt.Money(p.Labor)" Sub="@($"{Fmt.Pct(p.LaborPct)} of sales · {Fmt.Hours(p.LaborHours)}")" Href="@($"{ctx.Base}/employees")" />
+            <Kpi Label="Food cost" Icon="bi-egg-fried" Value="@Fmt.Pct(p.FoodCostPct)" ValueClass="@(p.NetSales > 0 && p.FoodCostPct > target ? "num-over" : "")"
+                 Sub="@($"{Fmt.Money(p.FoodCost)} recipe cost · target {Fmt.Pct(target)}")" Hint="Recipe cost of items sold, as a share of net sales" Href="@($"{ctx.Base}/menu")" />
+            <Kpi Label="Sales per labor hour" Icon="bi-stopwatch" Value="@Fmt.Money(p.SalesPerLaborHour)" />
+            <Kpi Label="Low stock" Icon="bi-exclamation-triangle" Value="@lowStock.Count.ToString()" ValueClass="@(lowStock.Count > 0 ? "num-over" : "")" Href="@($"{ctx.Base}/inventory")" />
+            <Kpi Label="Next event" Icon="bi-calendar-event" Value="@(next?.Name ?? "None planned")" Sub="@(next is null ? null : Fmt.Date(next.StartDate))" Href="@(next is null ? $"{ctx.Base}/events" : $"{ctx.Base}/events/{next.Id}")" />
+        </div>
+
+        <div class="grid-2">
+            <div class="panel">
+                <div class="panel-head"><h2 class="section-title">Profit &amp; loss</h2><span class="small-muted">@period.Label</span></div>
+                <PnLTable P="p" B="ctx.Business" />
+                <div class="panel-body small-muted border-top">Profit counts what you spent (expenses and labor), not recipe cost. Card fees are estimated from card sales; set the rate to 0 in Settings if you log processor fees as expenses.</div>
+            </div>
+            <div>
+                <div class="panel">
+                    <div class="panel-head"><h2 class="section-title">Sales by day</h2><span class="small-muted">@Fmt.Plural(snap.Days.Count, "day") with activity</span></div>
+                    <div class="panel-body">
+                        @if (snap.Days.Count == 0)
+                        {
+                            <div class="empty py-3"><i class="bi bi-bar-chart"></i>No sales yet for this period.</div>
+                        }
+                        else
+                        {
+                            var days = snap.Days.TakeLast(60).ToList();
+                            var max = Math.Max(1, days.Max(d => d.Sales));
+                            <div class="bar-chart" role="img" aria-label="Net sales by day">
+                                @foreach (var d in days)
+                                {
+                                    <div class="bar @(d.Profit < 0 ? "neg" : "")" style="height:@(Pct(d.Sales, max))%" title="@($"{Fmt.Date(d.Date)}: {Fmt.Money(d.Sales)} sales, {Fmt.Money(d.Profit)} profit")"></div>
+                                }
+                            </div>
+                            <div class="bar-axis"><span>@Fmt.Short(days[0].Date)</span><span>Red = a day that lost money</span><span>@Fmt.Short(days[^1].Date)</span></div>
+                        }
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-head"><h2 class="section-title">Top sellers</h2></div>
+                    @if (p.Items.Count == 0)
+                    {
+                        <div class="empty py-3"><i class="bi bi-card-list"></i>No menu-item sales yet.</div>
+                    }
+                    else
+                    {
+                        <div class="table-wrap">
+                            <table class="table-bt">
+                                <thead><tr><th>Item</th><th class="r">Sold</th><th class="r">Revenue</th><th class="r">Food cost</th><th class="r">Margin</th></tr></thead>
+                                <tbody>
+                                    @foreach (var i in p.Items.Take(10))
+                                    {
+                                        <tr><td>@i.Name</td><td class="r">@Fmt.Qty(i.Quantity)</td><td class="r">@Fmt.Money(i.Revenue)</td>
+                                            <td class="r">@(i.Revenue == 0 ? "—" : Fmt.Pct((double)(i.Cost / i.Revenue) * 100))</td><td class="r">@Fmt.Money(i.Margin)</td></tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="panel mt-3">
+            <div class="panel-head"><h2 class="section-title">By event</h2><a class="small" href="@($"{ctx.Base}/events")">All events</a></div>
+            @if (snap.Events.Count == 0)
+            {
+                <div class="empty py-3"><i class="bi bi-calendar-event"></i>Nothing recorded against an event in this period.</div>
+            }
+            else
+            {
+                <div class="table-wrap">
+                    <table class="table-bt">
+                        <thead><tr><th>Event</th><th>Date</th><th class="r">Net sales</th><th class="r">Labor</th><th class="r">Expenses</th><th class="r">Profit</th></tr></thead>
+                        <tbody>
+                            @foreach (var r in snap.Events)
+                            {
+                                <tr>
+                                    <td><a href="@($"{ctx.Base}/events/{r.Event.Id}")">@r.Event.Name</a></td>
+                                    <td class="text-nowrap">@Fmt.Days(r.Event.StartDate, r.Event.EndDate)</td>
+                                    <td class="r">@Fmt.Money(r.PnL.NetSales)</td><td class="r">@Fmt.Money(r.PnL.Labor)</td><td class="r">@Fmt.Money(r.PnL.Expenses)</td>
+                                    <td class="r @Fmt.ProfitClass(r.PnL.NetProfit)">@Fmt.Money(r.PnL.NetProfit)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+</BusinessShell>
+
+@code {
+    [Parameter] public int BusinessId { get; set; }
+
+    private BusinessContext ctx = default!;
+    private string preset = "month";
+    private Period period = Period.FromPreset("month", Today);
+    private BusinessMetrics.Snapshot? snap;
+    private List<InventoryItem> lowStock = new();
+    private Event? next;
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+    private static string Pct(decimal v, decimal max) => Math.Max(2, Math.Round(v / max * 100)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private async Task Load(BusinessContext c)
+    {
+        ctx = c;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        lowStock = (await db.InventoryItems.AsNoTracking().Where(i => i.BusinessId == BusinessId).ToListAsync()).Where(i => i.IsLow).ToList();
+        next = await db.Events.AsNoTracking().Where(e => e.BusinessId == BusinessId && e.Status == EventStatus.Planned && e.StartDate >= Today)
+            .OrderBy(e => e.StartDate).FirstOrDefaultAsync();
+        await Refresh();
+    }
+
+    private async Task Refresh() => snap = await Metrics.ForPeriodAsync(ctx.Business, period);
+
+    private async Task ChangePeriod(ChangeEventArgs e)
+    {
+        preset = e.Value?.ToString() ?? "month";
+        period = Period.FromPreset(preset, Today);
+        await Refresh();
+    }
+
+    private async Task ExportCsv()
+    {
+        if (snap is null) return;
+        var p = snap.PnL;
+        var rows = new List<object?[]>
+        {
+            new object?[] { "Gross sales", p.GrossSales }, new object?[] { "Sales tax", p.SalesTax }, new object?[] { "Net sales", p.NetSales },
+            new object?[] { "Card fees (est.)", p.CardFees }, new object?[] { "Event commissions", p.Commissions }, new object?[] { "Labor", p.Labor },
+            new object?[] { "Expenses", p.Expenses },
+        };
+        rows.AddRange(p.ExpensesByCategory.Select(x => new object?[] { "  " + Fmt.Label(x.Category), x.Amount }));
+        rows.Add(["Net profit", p.NetProfit]);
+        rows.Add(["Food cost (recipe)", p.FoodCost]);
+        await JS.InvokeVoidAsync("bt.download", $"pnl-{preset}-{Today:yyyyMMdd}.csv", Csv.Build(["Line", "Amount"], rows));
+    }
+}

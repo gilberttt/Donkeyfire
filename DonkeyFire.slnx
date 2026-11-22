@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DonkeyFire.Web/DonkeyFire.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DonkeyFire.Tests/DonkeyFire.Tests.csproj" />
+  </Folder>
+</Solution>

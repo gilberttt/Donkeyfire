@@ -1,0 +1,73 @@
+@inject BusinessAccess Access
+@inject CurrentUser Me
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<AppFrame Business="ctx?.Business">
+    @if (error is not null)
+    {
+        <div class="empty"><i class="bi bi-shield-lock"></i>@error <div class="mt-3"><a class="btn btn-primary" href="/">Back to my businesses</a></div></div>
+    }
+    else if (ctx is null)
+    {
+        <div class="page-loading">Loading…</div>
+    }
+    else
+    {
+        <CascadingValue Value="ctx" IsFixed="false">
+            @if (ready)
+            {
+                @ChildContent?.Invoke(ctx)
+            }
+            else
+            {
+                <div class="page-loading">Loading…</div>
+            }
+        </CascadingValue>
+    }
+</AppFrame>
+
+@code {
+    [Parameter, EditorRequired] public int BusinessId { get; set; }
+    [Parameter] public BusinessRole MinimumRole { get; set; } = BusinessRole.Viewer;
+    /// <summary>Page content. Receives the business context once access is confirmed.</summary>
+    [Parameter] public RenderFragment<BusinessContext>? ChildContent { get; set; }
+    /// <summary>Runs once the business and role are known; load page data here.</summary>
+    [Parameter] public EventCallback<BusinessContext> OnLoaded { get; set; }
+
+    private BusinessContext? ctx;
+    private bool ready;
+    private string? error;
+    private int loadedId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ctx is not null && loadedId == BusinessId) return;
+        ready = false;
+        await LoadAsync();
+        if (ctx is not null)
+        {
+            if (OnLoaded.HasDelegate) await OnLoaded.InvokeAsync(ctx);
+            ready = true;
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        error = null;
+        var role = await Access.GetRoleAsync(BusinessId);
+        if (role is null) { error = "This business doesn't exist or you don't have access to it."; ctx = null; return; }
+        if (role < MinimumRole) { error = "You need edit access to open this page."; ctx = null; return; }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var business = await db.Businesses.AsNoTracking().FirstAsync(p => p.Id == BusinessId);
+        ctx = new BusinessContext { Business = business, Role = role.Value, UserId = await Me.RequireIdAsync(), Reload = ReloadAsync };
+        loadedId = BusinessId;
+    }
+
+    private async Task ReloadAsync()
+    {
+        await LoadAsync();
+        // Pages keep the context they got from OnLoaded, so hand them the fresh one.
+        if (ctx is not null && OnLoaded.HasDelegate) await OnLoaded.InvokeAsync(ctx);
+        StateHasChanged();
+    }
+}

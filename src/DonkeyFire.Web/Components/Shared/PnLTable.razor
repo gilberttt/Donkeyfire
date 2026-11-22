@@ -1,0 +1,26 @@
+@* Profit and loss statement for a period or an event. *@
+<table class="table-bt pnl-table">
+    <tbody>
+        <tr><td>Gross sales</td><td>@Fmt.Money2(P.GrossSales)</td></tr>
+        @if (B.SalesTaxPercent > 0)
+        {
+            <tr class="sub"><td>Sales tax @(B.PricesIncludeTax ? "included" : "collected on top") (@Fmt.Qty(B.SalesTaxPercent)%)</td><td>@(B.PricesIncludeTax ? "−" : "")@Fmt.Money2(P.SalesTax)</td></tr>
+        }
+        <tr><td><strong>Net sales</strong></td><td><strong>@Fmt.Money2(P.NetSales)</strong></td></tr>
+        @if (P.CardFees != 0) { <tr class="sub"><td>Card fees (est. @Fmt.Qty(B.CardFeePercent)% of @Fmt.Money(P.CardSales))</td><td>−@Fmt.Money2(P.CardFees)</td></tr> }
+        @if (P.Commissions != 0) { <tr class="sub"><td>Event commissions</td><td>−@Fmt.Money2(P.Commissions)</td></tr> }
+        <tr><td>Labor (@Fmt.Hours(P.LaborHours))</td><td>−@Fmt.Money2(P.Labor)</td></tr>
+        @if (P.LaborBurden != 0) { <tr class="sub"><td>includes payroll burden @Fmt.Qty(B.LaborBurdenPercent)%</td><td>@Fmt.Money2(P.LaborBurden)</td></tr> }
+        <tr><td>Expenses</td><td>−@Fmt.Money2(P.Expenses)</td></tr>
+        @foreach (var (cat, amt) in P.ExpensesByCategory)
+        {
+            <tr class="sub"><td>@Fmt.Label(cat)</td><td>@Fmt.Money2(amt)</td></tr>
+        }
+        <tr class="total"><td>Net profit</td><td class="@Fmt.ProfitClass(P.NetProfit)">@Fmt.Money2(P.NetProfit)</td></tr>
+    </tbody>
+</table>
+
+@code {
+    [Parameter, EditorRequired] public PnL P { get; set; } = default!;
+    [Parameter, EditorRequired] public Business B { get; set; } = default!;
+}

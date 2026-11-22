@@ -1,0 +1,267 @@
+@page "/b/{BusinessId:int}/sales"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject SalesService SalesSvc
+@inject ToastService Toasts
+@inject IJSRuntime JS
+
+<PageTitle>Sales · Donkey Fire</PageTitle>
+
+<BusinessShell BusinessId="BusinessId" OnLoaded="Load" Context="ctx">
+    <div class="page-head">
+        <div>
+            <div class="eyebrow">Money</div>
+            <h1 class="display-title">Sales</h1>
+        </div>
+        <div class="actions">
+            <button class="btn btn-outline-secondary" @onclick="ExportCsv"><i class="bi bi-download"></i> CSV</button>
+            @if (ctx.CanEdit)
+            {
+                <button class="btn btn-outline-secondary" @onclick="NewLump"><i class="bi bi-calculator"></i> Add a lump sum</button>
+            }
+        </div>
+    </div>
+
+    @if (ctx.CanEdit)
+    {
+        <div class="panel">
+            <div class="panel-head">
+                <h2 class="section-title">Ring up</h2>
+                <div class="d-flex flex-wrap gap-2 align-items-center">
+                    <label class="visually-hidden" for="s-date">Date</label>
+                    <input id="s-date" type="date" class="form-control form-control-sm" style="width:auto" @bind="date" />
+                    <label class="visually-hidden" for="s-event">Event</label>
+                    <EventSelect Id="s-event" CssClass="form-select-sm" Events="events" @bind-Value="eventId" />
+                    <div class="seg" role="radiogroup" aria-label="Payment">
+                        @foreach (var m in Enum.GetValues<PaymentMethod>())
+                        {
+                            <button type="button" role="radio" aria-checked="@(payment == m)" class="@(payment == m ? "on" : "")" @onclick="() => payment = m">@m</button>
+                        }
+                    </div>
+                </div>
+            </div>
+            <div class="panel-body">
+                @if (menu.Count == 0)
+                {
+                    <div class="empty py-3"><i class="bi bi-card-list"></i>No active menu items. <a href="@($"{ctx.Base}/menu")">Add your menu</a> to ring up sales by item, or add a lump sum.</div>
+                }
+                else
+                {
+                    @foreach (var group in menu.GroupBy(m => m.Category ?? "Menu"))
+                    {
+                        <div class="eyebrow mb-2 mt-2">@group.Key</div>
+                        <div class="tally mb-2">
+                            @foreach (var m in group)
+                            {
+                                var q = Qty(m.Id);
+                                <div class="tally-item @(q != 0 ? "has" : "")">
+                                    <div class="nm">@m.Name</div>
+                                    <div class="pr">@Fmt.Money2(m.Price)</div>
+                                    <div class="stepper">
+                                        <button type="button" aria-label="One less @m.Name" @onclick="() => Bump(m.Id, -1)">−</button>
+                                        <input class="form-control" inputmode="numeric" aria-label="Quantity of @m.Name" value="@Fmt.Qty(q)" @onchange="e => SetQty(m.Id, e)" />
+                                        <button type="button" aria-label="One more @m.Name" @onclick="() => Bump(m.Id, 1)">+</button>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+            @if (menu.Count > 0)
+            {
+                <div class="tally-total">
+                    <div><span class="small-muted">@Fmt.Qty(tally.Values.Sum()) items</span> <strong class="mono fs-5 ms-2">@Fmt.Money2(TallyTotal)</strong></div>
+                    <div class="form-check ms-2">
+                        <input id="s-deduct" type="checkbox" class="form-check-input" @bind="deduct" />
+                        <label class="form-check-label small" for="s-deduct">Use up recipe ingredients from inventory</label>
+                    </div>
+                    <div class="ms-auto d-flex gap-2">
+                        <button class="btn btn-outline-secondary" disabled="@(tally.Count == 0)" @onclick="() => tally.Clear()">Clear</button>
+                        <button class="btn btn-accent" disabled="@(tally.Count == 0 || busy)" @onclick="SaveTally"><i class="bi bi-check-lg"></i> Record @payment sale</button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    <div class="panel">
+        <div class="panel-head">
+            <h2 class="section-title">Recorded sales</h2>
+            <div class="d-flex flex-wrap gap-2">
+                <label class="visually-hidden" for="s-period">Period</label>
+                <select id="s-period" class="form-select form-select-sm" style="width:auto" value="@preset" @onchange="ChangePeriod">
+                    @foreach (var (key, label) in Period.Presets) { <option value="@key">@label</option> }
+                </select>
+                <label class="visually-hidden" for="s-fevent">Filter by event</label>
+                <EventSelect Id="s-fevent" CssClass="form-select-sm" NoneText="All events" Events="events" @bind-Value="eventFilter" />
+            </div>
+        </div>
+        @if (Filtered.Count == 0)
+        {
+            <div class="empty"><i class="bi bi-cash-coin"></i>No sales in this period.</div>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="table-bt">
+                    <thead><tr><th>Date</th><th>Item</th><th>Event</th><th>Paid</th><th class="r">Qty</th><th class="r">Price</th><th class="r">Total</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var s in Filtered)
+                        {
+                            <tr>
+                                <td class="text-nowrap">@Fmt.Short(s.Date)</td>
+                                <td>@s.Description@if (s.MenuItemId is null) { <span class="pill pill-ok ms-1">Lump sum</span> }@if (!string.IsNullOrWhiteSpace(s.Note)) { <div class="small-muted">@s.Note</div> }</td>
+                                <td>@EventName(s.EventId)</td>
+                                <td>@s.Payment</td>
+                                <td class="r">@Fmt.Qty(s.Quantity)</td>
+                                <td class="r">@Fmt.Money2(s.UnitPrice)</td>
+                                <td class="r">@Fmt.Money2(s.Total)</td>
+                                <td class="row-actions">
+                                    @if (ctx.CanEdit)
+                                    {
+                                        <button class="btn btn-sm btn-outline-secondary" title="Delete" aria-label="Delete sale of @s.Description" @onclick="() => Delete(s)"><i class="bi bi-trash"></i></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr><td colspan="4">Total · cash @Fmt.Money(Filtered.Where(s => s.Payment == PaymentMethod.Cash).Sum(s => s.Total)) · card @Fmt.Money(Filtered.Where(s => s.Payment == PaymentMethod.Card).Sum(s => s.Total))</td>
+                            <td class="r">@Fmt.Qty(Filtered.Where(s => s.MenuItemId != null).Sum(s => s.Quantity))</td><td></td><td class="r">@Fmt.Money2(Filtered.Sum(s => s.Total))</td><td></td></tr>
+                    </tfoot>
+                </table>
+            </div>
+        }
+    </div>
+
+    <Modal @bind-Open="lumpOpen" Title="Add a lump sum" Icon="bi-calculator">
+        <ChildContent>
+            <p class="small-muted">For a day's total from your card reader or cash box when you don't ring up by item. Lump sums don't use up inventory or count toward food cost.</p>
+            <div class="form-grid">
+                <div class="full"><label class="form-label" for="l-desc">Description</label><input id="l-desc" class="form-control" @bind="lumpDesc" placeholder="e.g. Square total, Saturday" /></div>
+                <div><label class="form-label" for="l-amt">Amount ($)</label><input id="l-amt" type="number" step="0.01" class="form-control" @bind="lumpAmount" @bind:event="oninput" /></div>
+                <div><label class="form-label" for="l-date">Date</label><input id="l-date" type="date" class="form-control" @bind="lumpDate" /></div>
+                <div><label class="form-label" for="l-event">Event</label><EventSelect Id="l-event" Events="events" @bind-Value="lumpEvent" /></div>
+                <div><label class="form-label" for="l-pay">Payment</label>
+                    <select id="l-pay" class="form-select" @bind="lumpPayment">@foreach (var m in Enum.GetValues<PaymentMethod>()) { <option value="@m">@m</option> }</select></div>
+            </div>
+        </ChildContent>
+        <Footer>
+            <button class="btn btn-outline-secondary" @onclick="() => lumpOpen = false">Cancel</button>
+            <button class="btn btn-primary" disabled="@(lumpAmount is null or 0)" @onclick="SaveLump"><i class="bi bi-check-lg"></i> Save</button>
+        </Footer>
+    </Modal>
+    <ConfirmDialog @ref="confirm" />
+</BusinessShell>
+
+@code {
+    [Parameter] public int BusinessId { get; set; }
+
+    private BusinessContext ctx = default!;
+    private List<MenuItem> menu = new();
+    private List<Event> events = new();
+    private List<Sale> sales = new();
+    private readonly Dictionary<int, decimal> tally = new();
+    private DateOnly date = Today;
+    private int? eventId;
+    private PaymentMethod payment = PaymentMethod.Card;
+    private bool deduct = true, busy;
+    private string preset = "month";
+    private int? eventFilter;
+    private ConfirmDialog confirm = default!;
+
+    private bool lumpOpen;
+    private string lumpDesc = "";
+    private decimal? lumpAmount;
+    private DateOnly lumpDate = Today;
+    private int? lumpEvent;
+    private PaymentMethod lumpPayment = PaymentMethod.Card;
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+    private decimal Qty(int id) => tally.TryGetValue(id, out var q) ? q : 0;
+    private decimal TallyTotal => tally.Sum(t => t.Value * (menu.FirstOrDefault(m => m.Id == t.Key)?.Price ?? 0));
+    private string? EventName(int? id) => id is null ? null : events.FirstOrDefault(e => e.Id == id)?.Name;
+    private List<Sale> Filtered => sales.Where(s => eventFilter is null || s.EventId == eventFilter).ToList();
+
+    private async Task Load(BusinessContext c)
+    {
+        ctx = c;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        menu = await db.MenuItems.AsNoTracking().Where(m => m.BusinessId == BusinessId && m.IsActive).OrderBy(m => m.SortOrder).ThenBy(m => m.Name).ToListAsync();
+        events = await db.Events.AsNoTracking().Where(e => e.BusinessId == BusinessId && e.Status != EventStatus.Cancelled).ToListAsync();
+        // Default to an event running today, so a day at the stand needs no setup.
+        eventId = events.Where(e => e.StartDate <= Today && e.LastDate >= Today).Select(e => (int?)e.Id).FirstOrDefault();
+        lumpEvent = eventId;
+        await Refresh();
+    }
+
+    private async Task Refresh()
+    {
+        var p = Period.FromPreset(preset, Today);
+        await using var db = await DbFactory.CreateDbContextAsync();
+        sales = await db.Sales.AsNoTracking().Where(s => s.BusinessId == BusinessId && s.Date >= p.From && s.Date <= p.To)
+            .OrderByDescending(s => s.Date).ThenByDescending(s => s.Id).ToListAsync();
+    }
+
+    private async Task ChangePeriod(ChangeEventArgs e)
+    {
+        preset = e.Value?.ToString() ?? "month";
+        await Refresh();
+    }
+
+    private void Bump(int id, decimal by) => Put(id, Qty(id) + by);
+
+    private void SetQty(int id, ChangeEventArgs e) =>
+        Put(id, decimal.TryParse(e.Value?.ToString(), out var v) ? v : 0);
+
+    private void Put(int id, decimal q)
+    {
+        if (q <= 0) tally.Remove(id);
+        else tally[id] = q;
+    }
+
+    private async Task SaveTally()
+    {
+        busy = true;
+        try
+        {
+            var lines = tally.Select(t => new SaleLine(t.Key, t.Value)).ToList();
+            var saved = await SalesSvc.RecordItemsAsync(BusinessId, date, eventId, payment, lines, deduct);
+            Toasts.Show($"Recorded {Fmt.Money2(saved.Sum(s => s.Total))} in {payment.ToString().ToLowerInvariant()} sales.");
+            tally.Clear();
+            await Refresh();
+        }
+        finally { busy = false; }
+    }
+
+    private void NewLump()
+    {
+        lumpDesc = ""; lumpAmount = null; lumpDate = date; lumpEvent = eventId; lumpPayment = PaymentMethod.Card;
+        lumpOpen = true;
+    }
+
+    private async Task SaveLump()
+    {
+        if (lumpAmount is not { } amt || amt == 0) return;
+        await SalesSvc.RecordLumpSumAsync(BusinessId, lumpDate, lumpEvent, lumpPayment, lumpDesc, amt);
+        lumpOpen = false;
+        Toasts.Show($"Added {Fmt.Money2(amt)}.");
+        await Refresh();
+    }
+
+    private async Task Delete(Sale s)
+    {
+        var extra = s.MenuItemId is null ? "" : " Any ingredients it used go back into inventory.";
+        if (!await confirm.AskAsync($"Delete {Fmt.Qty(s.Quantity)} × {s.Description} ({Fmt.Money2(s.Total)}) on {Fmt.Date(s.Date)}?{extra}", "Delete this sale?")) return;
+        await SalesSvc.DeleteAsync(BusinessId, s.Id);
+        Toasts.Show("Sale deleted.");
+        await Refresh();
+    }
+
+    private async Task ExportCsv()
+    {
+        var csv = Csv.Build(["Date", "Item", "Event", "Payment", "Quantity", "Unit price", "Total", "Unit cost", "Note"],
+            Filtered.Select(s => new object?[] { s.Date, s.Description, EventName(s.EventId), s.Payment, s.Quantity, s.UnitPrice, s.Total, s.UnitCost, s.Note }));
+        await JS.InvokeVoidAsync("bt.download", $"sales-{preset}-{Today:yyyyMMdd}.csv", csv);
+    }
+}

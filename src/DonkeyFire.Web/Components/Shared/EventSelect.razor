@@ -1,0 +1,23 @@
+@* Picks an event (or none). Events are listed newest first. *@
+<select id="@Id" class="form-select @CssClass" value="@(Value?.ToString() ?? "")" @onchange="Changed">
+    <option value="">@NoneText</option>
+    @foreach (var e in Events.OrderByDescending(e => e.StartDate))
+    {
+        <option value="@e.Id">@e.Name · @Fmt.Short(e.StartDate)</option>
+    }
+</select>
+
+@code {
+    [Parameter] public string? Id { get; set; }
+    [Parameter] public string? CssClass { get; set; }
+    [Parameter] public string NoneText { get; set; } = "No event";
+    [Parameter] public IReadOnlyList<Event> Events { get; set; } = [];
+    [Parameter] public int? Value { get; set; }
+    [Parameter] public EventCallback<int?> ValueChanged { get; set; }
+
+    private async Task Changed(ChangeEventArgs e)
+    {
+        Value = int.TryParse(e.Value?.ToString(), out var id) ? id : null;
+        await ValueChanged.InvokeAsync(Value);
+    }
+}
