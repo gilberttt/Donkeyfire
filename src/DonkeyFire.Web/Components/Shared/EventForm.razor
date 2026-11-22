@@ -5,7 +5,8 @@
 <Modal @bind-Open="open" Title="@(form.Id == 0 ? "Add event" : "Edit event")" Icon="bi-calendar-event" Size="lg">
     <ChildContent>
         <div class="form-grid">
-            <div class="full"><label class="form-label" for="ev-name">Event name</label><input id="ev-name" class="form-control" @bind="form.Name" @bind:event="oninput" placeholder="e.g. Eufaula Pilgrimage" /></div>
+            <div class="full"><label class="form-label" for="ev-name">Event name</label><input id="ev-name" class="form-control" @bind="form.Name" @bind:event="oninput" placeholder="e.g. Spring Baseball 2027, or Eufaula Pilgrimage" /></div>
+            <div class="full small-muted" style="margin-top:-.4rem">A whole season can be one event: set its first and last day, and every sale in between lands on it.</div>
             <div><label class="form-label" for="ev-start">Start date</label><input id="ev-start" type="date" class="form-control" @bind="form.StartDate" /></div>
             <div><label class="form-label" for="ev-end">End date (multi-day)</label><input id="ev-end" type="date" class="form-control" @bind="form.EndDate" /></div>
             <div><label class="form-label" for="ev-kind">Type</label>
@@ -18,7 +19,7 @@
             <div><label class="form-label" for="ev-comm">Organizer's cut of sales (%)</label><input id="ev-comm" type="number" min="0" max="100" step="0.5" class="form-control" @bind="form.CommissionPercent" /></div>
             <div><label class="form-label" for="ev-goal">Sales goal ($)</label><input id="ev-goal" type="number" min="0" step="50" class="form-control" @bind="form.SalesGoal" /></div>
             <div class="full form-check ms-1"><input id="ev-outside" type="checkbox" class="form-check-input" @bind="form.OutsideCityLimits" /><label class="form-check-label" for="ev-outside">Outside city limits (no city sales tax)</label></div>
-            <div class="full form-check ms-1"><input id="ev-noshare" type="checkbox" class="form-check-input" @bind="form.ExcludeFromRevenueShare" /><label class="form-check-label" for="ev-noshare">Not covered by the revenue-share agreement (e.g. private catering)</label></div>
+            <div class="full form-check ms-1"><input id="ev-venue" type="checkbox" class="form-check-input" @bind="form.AtPartnerVenue" /><label class="form-check-label" for="ev-venue">At a Parks &amp; Rec venue: sales count toward the revenue share</label></div>
             <div class="full"><label class="form-label" for="ev-notes">Notes</label><textarea id="ev-notes" class="form-control" rows="3" @bind="form.Notes" placeholder="Load-in time, power, parking, what sold out last year"></textarea></div>
         </div>
         <p class="small-muted mt-3 mb-0">The booth fee here is the agreed amount. When you pay it, record it as an expense (the event page has a button for that) so it counts in profit once.</p>
@@ -45,7 +46,7 @@
         form = new Event
         {
             Id = e.Id, BusinessId = BusinessId, Name = e.Name, Kind = e.Kind, Status = e.Status, StartDate = e.StartDate, EndDate = e.EndDate,
-            Location = e.Location, Contact = e.Contact, BoothFee = e.BoothFee, CommissionPercent = e.CommissionPercent, SalesGoal = e.SalesGoal, OutsideCityLimits = e.OutsideCityLimits, ExcludeFromRevenueShare = e.ExcludeFromRevenueShare,
+            Location = e.Location, Contact = e.Contact, BoothFee = e.BoothFee, CommissionPercent = e.CommissionPercent, SalesGoal = e.SalesGoal, OutsideCityLimits = e.OutsideCityLimits, AtPartnerVenue = e.AtPartnerVenue,
             Notes = e.Notes, CreatedAt = e.CreatedAt,
         };
         open = true;
@@ -61,8 +62,12 @@
         else if (await db.Events.AnyAsync(x => x.Id == form.Id && x.BusinessId == BusinessId)) db.Events.Update(form);
         else { Toasts.Error("That event no longer exists."); open = false; return; }
         await db.SaveChangesAsync();
+        // Sales already recorded in these dates without an event (say, Square sales synced before the season was added) belong to it.
+        var last = form.LastDate;
+        var attached = await db.Sales.Where(x => x.BusinessId == BusinessId && x.EventId == null && x.Date >= form.StartDate && x.Date <= last)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.EventId, form.Id));
         open = false;
-        Toasts.Show($"Saved {form.Name}.");
+        Toasts.Show($"Saved {form.Name}." + (attached > 0 ? $" Attached {Fmt.Plural(attached, "earlier sale")} from those dates." : ""));
         await OnSaved.InvokeAsync();
     }
 

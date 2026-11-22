@@ -102,8 +102,11 @@ public class Event
     public decimal? SalesGoal { get; set; }
     /// <summary>Held outside the city limits, so city sales tax doesn't apply.</summary>
     public bool OutsideCityLimits { get; set; }
-    /// <summary>Not covered by the revenue-share agreement (e.g. a private catering job elsewhere).</summary>
-    public bool ExcludeFromRevenueShare { get; set; }
+    /// <summary>
+    /// Held at the revenue-share partner's venue (an Eufaula Parks and Recreation field or park), so its sales count toward
+    /// the share. A season (spring baseball, fall flag football) can be one event spanning its dates.
+    /// </summary>
+    public bool AtPartnerVenue { get; set; }
     public string? Notes { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

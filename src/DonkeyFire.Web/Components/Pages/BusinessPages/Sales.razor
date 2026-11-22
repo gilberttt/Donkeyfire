@@ -234,7 +234,7 @@
         menu = await db.MenuItems.AsNoTracking().Where(m => m.BusinessId == BusinessId && m.IsActive).OrderBy(m => m.SortOrder).ThenBy(m => m.Name).ToListAsync();
         events = await db.Events.AsNoTracking().Where(e => e.BusinessId == BusinessId && e.Status != EventStatus.Cancelled).ToListAsync();
         // Default to an event running today, so a day at the stand needs no setup.
-        eventId = events.Where(e => e.StartDate <= Today && e.LastDate >= Today).Select(e => (int?)e.Id).FirstOrDefault();
+        eventId = events.Where(e => e.StartDate <= Today && e.LastDate >= Today).OrderByDescending(e => e.StartDate).Select(e => (int?)e.Id).FirstOrDefault();
         lumpEvent = eventId;
         // With Square taking the card sales, what gets rung up here is mostly cash.
         if (SquareOn) payment = PaymentMethod.Cash;

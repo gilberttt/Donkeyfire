@@ -35,12 +35,14 @@ public record DaySales(DateOnly Date, decimal Sales, decimal Profit);
 public record TaxLine(string Name, TaxLevel Level, decimal Percent, string? FiledWith, decimal Amount);
 
 /// <summary>
-/// The revenue share owed to a venue partner: a percent of (gross sales − sales tax − cost of goods − labor), never below zero.
-/// Worked out per calendar month; a period of several months adds up each month's share.
+/// The revenue share owed to a venue partner: a percent of (gross sales − sales tax − card fees − cost of goods − labor) for
+/// sales at the partner's venues, never below zero. Worked out per calendar month; a period of several months adds up each
+/// month's share. <see cref="SalesNotCounted"/> is sales elsewhere or not tied to any event.
 /// </summary>
-public record RevenueShare(string Partner, decimal Percent, CogsBasis CogsBasis, decimal GrossSales, decimal SalesTax, decimal Cogs, decimal Labor, decimal Owed)
+public record RevenueShare(string Partner, decimal Percent, CogsBasis CogsBasis, decimal GrossSales, decimal SalesTax, decimal Fees, decimal Cogs,
+    decimal Labor, decimal Owed, decimal SalesNotCounted, decimal SalesWithoutEvent)
 {
-    public decimal Base => GrossSales - SalesTax - Cogs - Labor;
+    public decimal Base => GrossSales - SalesTax - Fees - Cogs - Labor;
 }
 
 /// <summary>
@@ -157,9 +159,7 @@ public class BusinessMetrics(IDbContextFactory<AppDbContext> dbf)
             SalesTax = Round(taxTotal),
             Taxes = tax.Rates.Select(r => new TaxLine(r.Name, r.Level, r.Percent, r.FiledWith, Round(byRate.GetValueOrDefault(r)))).ToList(),
             NetSales = Round(net),
-            // Square sales carry their real fee; anything else paid by card gets the estimated rate.
-            CardFees = Round(sales.Sum(s => s.Fee ?? 0)
-                + sales.Where(s => s.Fee is null && s.Payment == PaymentMethod.Card).Sum(s => s.Total) * b.CardFeePercent / 100),
+            CardFees = Round(sales.Sum(s => FeeOf(b, s))),
             ActualFees = sales.Any(s => s.Fee is not null),
             TipsCollected = sales.Sum(s => s.Tip),
             Commissions = Round(commissions),
@@ -180,26 +180,38 @@ public class BusinessMetrics(IDbContextFactory<AppDbContext> dbf)
         };
     }
 
+    /// <summary>Square sales carry their real fee; anything else paid by card gets the estimated rate.</summary>
+    public static decimal FeeOf(Business b, Sale s) => s.Fee ?? (s.Payment == PaymentMethod.Card ? s.Total * b.CardFeePercent / 100 : 0);
+
     /// <summary>
-    /// The partner's share of these rows, leaving out anything tied to an event the agreement doesn't cover. Labor is
-    /// wages plus payroll burden (tips aren't a business cost).
+    /// The partner's share of these rows. Only sales at events marked as the partner's venue count. Costs tied to those
+    /// events count in full; costs not tied to any event (a Sam's Club run, a shift with no event) are shared out by the
+    /// venue's portion of the month's pre-tax sales. Costs tied to other events don't count. Labor is wages plus payroll
+    /// burden (tips aren't a business cost).
     /// </summary>
     private static RevenueShare? ShareOf(Business b, IReadOnlyCollection<Sale> sales, IReadOnlyCollection<Expense> expenses, IReadOnlyCollection<Shift> shifts,
         Func<int?, Event?> eventOf, IReadOnlyDictionary<Sale, decimal> taxBySale)
     {
         if (string.IsNullOrWhiteSpace(b.RevenueSharePartner) || b.RevenueSharePercent <= 0) return null;
-        bool Covered(int? eventId) => eventOf(eventId)?.ExcludeFromRevenueShare != true;
-        var inScope = sales.Where(s => Covered(s.EventId)).ToList();
-        var gross = inScope.Sum(s => s.Total);
-        var tax = inScope.Sum(s => taxBySale[s]);
+        bool Covered(int? eventId) => eventOf(eventId)?.AtPartnerVenue == true;
+        var atVenue = sales.Where(s => Covered(s.EventId)).ToList();
+        var preTaxAll = sales.Sum(s => s.Total - taxBySale[s]);
+        var portion = preTaxAll <= 0 ? 0 : Math.Clamp(atVenue.Sum(s => s.Total - taxBySale[s]) / preTaxAll, 0, 1);
+        decimal Allocated<T>(IEnumerable<T> rows, Func<T, int?> eventId, Func<T, decimal> amount) =>
+            rows.Where(r => Covered(eventId(r))).Sum(amount) + rows.Where(r => eventId(r) is null).Sum(amount) * portion;
+
         var cogs = b.RevenueShareCogsBasis == CogsBasis.RecipeCost
-            ? inScope.Sum(s => s.Quantity * s.UnitCost)
-            : expenses.Where(e => GoodsCategories.Contains(e.Category) && Covered(e.EventId)).Sum(e => e.Amount);
-        var wages = shifts.Where(s => Covered(s.EventId)).Sum(s => s.Wages);
+            ? atVenue.Sum(s => s.Quantity * s.UnitCost)
+            : Allocated(expenses.Where(e => GoodsCategories.Contains(e.Category)), e => e.EventId, e => e.Amount);
+        var wages = Allocated(shifts, s => s.EventId, s => s.Wages);
         var labor = wages + wages * b.LaborBurdenPercent / 100;
-        var baseAmount = gross - tax - cogs - labor;
+        var gross = atVenue.Sum(s => s.Total);
+        var tax = atVenue.Sum(s => taxBySale[s]);
+        var fees = atVenue.Sum(s => FeeOf(b, s));
+        var baseAmount = gross - tax - fees - cogs - labor;
         return new RevenueShare(b.RevenueSharePartner.Trim(), b.RevenueSharePercent, b.RevenueShareCogsBasis,
-            Round(gross), Round(tax), Round(cogs), Round(labor), Round(Math.Max(0, baseAmount) * b.RevenueSharePercent / 100));
+            Round(gross), Round(tax), Round(fees), Round(cogs), Round(labor), Round(Math.Max(0, baseAmount) * b.RevenueSharePercent / 100),
+            Round(sales.Sum(s => s.Total) - gross), Round(sales.Where(s => s.EventId is null).Sum(s => s.Total)));
     }
 
     private static decimal Round(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
@@ -242,8 +254,9 @@ public class BusinessMetrics(IDbContextFactory<AppDbContext> dbf)
         if (parts.Count == 0) return null;
         return parts[0] with
         {
-            GrossSales = parts.Sum(p => p.GrossSales), SalesTax = parts.Sum(p => p.SalesTax), Cogs = parts.Sum(p => p.Cogs),
-            Labor = parts.Sum(p => p.Labor), Owed = parts.Sum(p => p.Owed),
+            GrossSales = parts.Sum(p => p.GrossSales), SalesTax = parts.Sum(p => p.SalesTax), Fees = parts.Sum(p => p.Fees), Cogs = parts.Sum(p => p.Cogs),
+            Labor = parts.Sum(p => p.Labor), Owed = parts.Sum(p => p.Owed), SalesNotCounted = parts.Sum(p => p.SalesNotCounted),
+            SalesWithoutEvent = parts.Sum(p => p.SalesWithoutEvent),
         };
     }
 

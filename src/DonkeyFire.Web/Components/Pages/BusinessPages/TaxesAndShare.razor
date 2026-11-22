@@ -87,8 +87,9 @@
                 {
                     <table class="table-bt pnl-table">
                         <tbody>
-                            <tr><td>Gross sales</td><td>@Fmt.Money2(share.GrossSales)</td></tr>
+                            <tr><td>Gross sales at park venues</td><td>@Fmt.Money2(share.GrossSales)</td></tr>
                             <tr class="sub"><td>Less sales tax</td><td>−@Fmt.Money2(share.SalesTax)</td></tr>
+                            <tr class="sub"><td>Less card fees<div class="small-muted">@(share.Fees > 0 && current.PnL.ActualFees ? "Square's actual fees" : $"Estimated {Fmt.Qty(ctx.Business.CardFeePercent)}% of card sales")</div></td><td>−@Fmt.Money2(share.Fees)</td></tr>
                             <tr class="sub"><td>Less cost of goods<div class="small-muted">@Fmt.Label(share.CogsBasis)</div></td><td>−@Fmt.Money2(share.Cogs)</td></tr>
                             <tr class="sub"><td>Less employee costs<div class="small-muted">Wages@(ctx.Business.LaborBurdenPercent > 0 ? $" + {Fmt.Qty(ctx.Business.LaborBurdenPercent)}% payroll burden" : "")</div></td><td>−@Fmt.Money2(share.Labor)</td></tr>
                             <tr><td><strong>Amount the share is figured on</strong></td><td class="@(share.Base < 0 ? "num-over" : "")"><strong>@Fmt.Money2(share.Base)</strong></td></tr>
@@ -99,8 +100,16 @@
                     </table>
                     <div class="panel-body small-muted border-top">
                         @if (share.Base < 0) { <span>Costs were more than sales after tax this month, so nothing is owed. </span> }
-                        Sales, purchases and shifts tied to an event marked "not covered by the agreement" are left out.
+                        Only sales at events marked as a Parks &amp; Rec venue count@(share.SalesNotCounted > 0 ? $" ({Fmt.Money2(share.SalesNotCounted)} of sales elsewhere this month isn't counted)" : "").
+                        Purchases and shifts not tied to an event are shared out by the park venues' part of the month's sales.
                     </div>
+                    @if (share.SalesWithoutEvent > 0)
+                    {
+                        <div class="alert alert-warning small m-3 mb-0">
+                            <i class="bi bi-exclamation-triangle"></i> @Fmt.Money2(share.SalesWithoutEvent) of sales this month isn't tied to any event, so it isn't counted for @PartnerShort.
+                            If any of it was at a park, add that season or game as an event (sales in its dates attach to it automatically), or <a href="@($"{ctx.Base}/sales")">check Sales</a>.
+                        </div>
+                    }
                     @if (ctx.CanEdit && current.ShareDue > 0.005m)
                     {
                         <div class="bt-modal-foot"><button class="btn btn-primary" @onclick="() => StartPayment(ExpenseCategory.RevenueSharePayment, current.ShareDue)"><i class="bi bi-check2-circle"></i> Record @PartnerShort payment</button></div>

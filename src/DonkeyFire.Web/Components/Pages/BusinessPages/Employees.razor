@@ -315,7 +315,7 @@
 
     private void NewShift()
     {
-        var running = events.FirstOrDefault(e => e.StartDate <= Today && e.LastDate >= Today);
+        var running = events.Where(e => e.StartDate <= Today && e.LastDate >= Today).OrderByDescending(e => e.StartDate).FirstOrDefault();
         shiftForm = new Shift { BusinessId = BusinessId, EventId = running?.Id };
         picked.Clear();
         shiftOpen = true;

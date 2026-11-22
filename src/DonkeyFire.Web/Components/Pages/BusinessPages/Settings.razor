@@ -110,8 +110,9 @@
                         <select id="rs-cogs" class="form-select" @bind="form.RevenueShareCogsBasis">@foreach (var c in Enum.GetValues<CogsBasis>()) { <option value="@c">@Fmt.Label(c)</option> }</select></div>
                 </div>
                 <p class="small-muted mt-3 mb-0">
-                    Owed each month: the share % of gross sales minus sales tax, cost of goods and employee costs (wages plus payroll burden), never below zero.
-                    "Purchases" counts Food &amp; drink and Paper &amp; supplies expenses dated that month; "Recipe cost" counts the recipe cost of what was sold.
+                    Owed each month: the share % of sales at park venues minus sales tax, card fees, cost of goods and employee costs (wages plus payroll burden), never below zero.
+                    Mark each event (or season) held at a park as a Parks &amp; Rec venue. "Purchases" counts Food &amp; drink and Paper &amp; supplies expenses dated that month;
+                    "Recipe cost" counts the recipe cost of what was sold. Purchases and shifts not tied to an event are shared out by the park venues' part of the month's sales.
                 </p>
             </div>
             @if (ctx.CanEdit)

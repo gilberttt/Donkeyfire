@@ -201,6 +201,9 @@ namespace DonkeyFire.Web.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("AtPartnerVenue")
+                        .HasColumnType("INTEGER");
+
                     b.Property<decimal>("BoothFee")
                         .HasColumnType("TEXT");
 
@@ -218,9 +221,6 @@ namespace DonkeyFire.Web.Data.Migrations
 
                     b.Property<DateOnly?>("EndDate")
                         .HasColumnType("TEXT");
-
-                    b.Property<bool>("ExcludeFromRevenueShare")
-                        .HasColumnType("INTEGER");
 
                     b.Property<int>("Kind")
                         .HasColumnType("INTEGER");

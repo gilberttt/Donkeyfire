@@ -14,14 +14,17 @@ public class TaxAndShareTests
 
     private static TaxPlan Eufaula(Business b) => new(b, BusinessSeeder.EufaulaRates(b.Id));
 
-    private static Sale S(decimal total, int? ev = null, decimal unitCost = 0) =>
-        new() { Quantity = 1, UnitPrice = total, UnitCost = unitCost, MenuItemId = 1, EventId = ev, Description = "Item" };
+    private static readonly Event Park = new() { Id = 1, Name = "Spring Baseball", AtPartnerVenue = true };
+    private static Dictionary<int, Event> Events(params Event[] more) => new[] { Park }.Concat(more).ToDictionary(e => e.Id);
+
+    private static Sale S(decimal total, int? ev = 1, decimal unitCost = 0, PaymentMethod pay = PaymentMethod.Cash, decimal? fee = null) =>
+        new() { Quantity = 1, UnitPrice = total, UnitCost = unitCost, MenuItemId = 1, EventId = ev, Description = "Item", Payment = pay, Fee = fee };
 
     [Fact]
     public void Tax_included_in_prices_is_split_into_state_county_and_city()
     {
         var b = Shop();
-        var p = BusinessMetrics.Compute(b, [S(1095)], [], [], new Dictionary<int, Event>(), Eufaula(b));
+        var p = BusinessMetrics.Compute(b, [S(1095)], [], [], Events(), Eufaula(b));
 
         Assert.Equal(95, p.SalesTax);                       // 1095 = 1000 + 9.5%
         Assert.Equal(1000, p.NetSales);
@@ -34,7 +37,7 @@ public class TaxAndShareTests
     {
         var b = Shop();
         var lake = new Event { Id = 3, OutsideCityLimits = true };
-        var p = BusinessMetrics.Compute(b, [S(1055, ev: 3)], [], [], new Dictionary<int, Event> { [3] = lake }, Eufaula(b));
+        var p = BusinessMetrics.Compute(b, [S(1055, ev: 3)], [], [], Events(lake), Eufaula(b));
 
         Assert.Equal(55, p.SalesTax);
         Assert.Equal(0, p.Taxes.Single(t => t.Level == TaxLevel.City).Amount);
@@ -48,7 +51,7 @@ public class TaxAndShareTests
         var p = BusinessMetrics.Compute(b, [S(1095)],
             [new Expense { Category = ExpenseCategory.FoodAndDrink, Amount = 200 }, new Expense { Category = ExpenseCategory.PaperAndSupplies, Amount = 50 },
              new Expense { Category = ExpenseCategory.PropaneAndFuel, Amount = 30 }],
-            [new Shift { Hours = 10, HourlyRate = 20, Tips = 25 }], new Dictionary<int, Event>(), Eufaula(b));
+            [new Shift { Hours = 10, HourlyRate = 20, Tips = 25 }], Events(), Eufaula(b));
 
         var share = p.Share!;
         Assert.Equal((1095m, 95m, 250m, 220m), (share.GrossSales, share.SalesTax, share.Cogs, share.Labor));
@@ -62,23 +65,50 @@ public class TaxAndShareTests
     {
         var b = Shop(CogsBasis.RecipeCost);
         var p = BusinessMetrics.Compute(b, [S(1095, unitCost: 300)], [new Expense { Category = ExpenseCategory.FoodAndDrink, Amount = 999 }], [],
-            new Dictionary<int, Event>(), Eufaula(b));
+            Events(), Eufaula(b));
         Assert.Equal(300, p.Share!.Cogs);
         Assert.Equal(175, p.Share.Owed);
     }
 
     [Fact]
-    public void Nothing_is_owed_when_costs_exceed_sales_and_excluded_events_are_left_out()
+    public void Nothing_is_owed_when_costs_exceed_sales()
     {
         var b = Shop();
-        var catering = new Event { Id = 9, ExcludeFromRevenueShare = true };
-        var p = BusinessMetrics.Compute(b, [S(109.5m), S(5000, ev: 9)],
-            [new Expense { Category = ExpenseCategory.FoodAndDrink, Amount = 500 }, new Expense { Category = ExpenseCategory.FoodAndDrink, Amount = 900, EventId = 9 }],
-            [], new Dictionary<int, Event> { [9] = catering }, Eufaula(b));
-
-        Assert.Equal(109.5m, p.Share!.GrossSales);
-        Assert.Equal(500, p.Share.Cogs);
+        var p = BusinessMetrics.Compute(b, [S(109.5m)], [new Expense { Category = ExpenseCategory.FoodAndDrink, Amount = 500, EventId = 1 }], [], Events(), Eufaula(b));
+        Assert.Equal(-400, p.Share!.Base);
         Assert.Equal(0, p.Share.Owed);
+    }
+
+    [Fact]
+    public void Card_fees_come_off_before_the_share()
+    {
+        var b = Shop();
+        b.CardFeePercent = 3;
+        var p = BusinessMetrics.Compute(b, [S(1095, pay: PaymentMethod.Card, fee: 30m), S(109.5m, pay: PaymentMethod.Card)], [], [], Events(), Eufaula(b));
+        Assert.Equal(33.29m, p.Share!.Fees);                // Square's actual fee, plus 3% estimated on the sale without one
+        Assert.Equal(Math.Round((1100 - 33.29m) * 0.25m, 2), p.Share.Owed);
+    }
+
+    [Fact]
+    public void Only_park_venue_sales_count_and_unassigned_costs_are_shared_out_by_sales()
+    {
+        var b = Shop();
+        var festival = new Event { Id = 2, Name = "Indian Summer Festival" };
+        var p = BusinessMetrics.Compute(b,
+            [S(1095), S(1095, ev: 2), S(219, ev: null)],                           // park 1000, festival 1000, no event 200 (pre-tax)
+            [new Expense { Category = ExpenseCategory.FoodAndDrink, Amount = 440 },             // Sam's run, no event: 1000/2200 of it
+             new Expense { Category = ExpenseCategory.PaperAndSupplies, Amount = 50, EventId = 1 },
+             new Expense { Category = ExpenseCategory.FoodAndDrink, Amount = 300, EventId = 2 }],
+            [new Shift { Hours = 11, HourlyRate = 20 }, new Shift { Hours = 5, HourlyRate = 20, EventId = 1 }, new Shift { Hours = 8, HourlyRate = 20, EventId = 2 }],
+            Events(festival), Eufaula(b));
+
+        var share = p.Share!;
+        Assert.Equal((1095m, 95m), (share.GrossSales, share.SalesTax));
+        Assert.Equal(200 + 50, share.Cogs);                 // 440 × 1000/2200 + 50
+        Assert.Equal(100 + 100, share.Labor);               // 220 × 1000/2200 + 100
+        Assert.Equal(1314, share.SalesNotCounted);
+        Assert.Equal(219, share.SalesWithoutEvent);
+        Assert.Equal(137.50m, share.Owed);                  // 25% of (1000 − 250 − 200)
     }
 
     [Fact]
@@ -87,7 +117,7 @@ public class TaxAndShareTests
         var b = Shop();
         var p = BusinessMetrics.Compute(b, [S(1095)],
             [new Expense { Category = ExpenseCategory.SalesTaxPayment, Amount = 95 }, new Expense { Category = ExpenseCategory.RevenueSharePayment, Amount = 250 }],
-            [], new Dictionary<int, Event>(), Eufaula(b));
+            [], Events(), Eufaula(b));
         Assert.Equal(0, p.Expenses);
         Assert.Equal((95m, 250m), (p.SalesTaxPaid, p.RevenueSharePaid));
         Assert.Equal(1000 - 250, p.NetProfit);              // share owed is 25% of 1000
@@ -103,8 +133,11 @@ public class TaxAndShareTests
         db.Businesses.Add(b);
         await db.SaveChangesAsync();
         db.TaxRates.AddRange(BusinessSeeder.EufaulaRates(b.Id));
-        db.Sales.Add(new Sale { BusinessId = b.Id, Date = new DateOnly(2026, 9, 12), Quantity = 1, UnitPrice = 1095, Description = "Sept" });
-        db.Sales.Add(new Sale { BusinessId = b.Id, Date = new DateOnly(2026, 10, 3), Quantity = 1, UnitPrice = 109.5m, Description = "Oct" });
+        var season = new Event { BusinessId = b.Id, Name = "Fall ball", StartDate = new DateOnly(2026, 9, 1), EndDate = new DateOnly(2026, 10, 31), AtPartnerVenue = true };
+        db.Events.Add(season);
+        await db.SaveChangesAsync();
+        db.Sales.Add(new Sale { BusinessId = b.Id, EventId = season.Id, Date = new DateOnly(2026, 9, 12), Quantity = 1, UnitPrice = 1095, Description = "Sept" });
+        db.Sales.Add(new Sale { BusinessId = b.Id, EventId = season.Id, Date = new DateOnly(2026, 10, 3), Quantity = 1, UnitPrice = 109.5m, Description = "Oct" });
         db.Expenses.Add(new Expense { BusinessId = b.Id, Date = new DateOnly(2026, 10, 3), Category = ExpenseCategory.FoodAndDrink, Amount = 400, Description = "Food" });
         db.Expenses.Add(new Expense { BusinessId = b.Id, Date = new DateOnly(2026, 10, 18), ForMonth = new DateOnly(2026, 9, 1), Category = ExpenseCategory.SalesTaxPayment, Amount = 95, Description = "Tax" });
         await db.SaveChangesAsync();

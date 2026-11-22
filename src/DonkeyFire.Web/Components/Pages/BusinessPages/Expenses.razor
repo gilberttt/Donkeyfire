@@ -167,7 +167,7 @@
 
     private void New()
     {
-        var running = events.FirstOrDefault(e => e.StartDate <= Today && e.LastDate >= Today);
+        var running = events.Where(e => e.StartDate <= Today && e.LastDate >= Today).OrderByDescending(e => e.StartDate).FirstOrDefault();
         form = new Expense { BusinessId = BusinessId, EventId = running?.Id };
         editing = true;
     }

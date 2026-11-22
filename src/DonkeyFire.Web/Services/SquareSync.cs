@@ -171,7 +171,9 @@ public class SquareSync(SquareClient square, IDbContextFactory<AppDbContext> dbf
         foreach (var o in orders.Where(o => o.State == "COMPLETED"))
         {
             var date = LocalDate(o.ClosedAt, tz);
-            var eventId = events.Where(e => e.StartDate <= date && e.LastDate >= date).OrderBy(e => e.StartDate).Select(e => (int?)e.Id).FirstOrDefault();
+            // When events overlap (a festival weekend during baseball season), the one that started most recently is the more specific.
+            var eventId = events.Where(e => e.StartDate <= date && e.LastDate >= date).OrderByDescending(e => e.StartDate).ThenBy(e => e.LastDate)
+                .Select(e => (int?)e.Id).FirstOrDefault();
             var tenders = o.Tenders ?? [];
             var payment = PaymentOf(tenders);
             var anyFee = tenders.Any(t => t.ProcessingFeeMoney is not null);

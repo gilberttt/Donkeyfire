@@ -36,7 +36,7 @@
                         @foreach (var e in past ? Past : Upcoming)
                         {
                             <tr>
-                                <td><a href="@($"{ctx.Base}/events/{e.Id}")"><strong>@e.Name</strong></a></td>
+                                <td><a href="@($"{ctx.Base}/events/{e.Id}")"><strong>@e.Name</strong></a>@if (e.AtPartnerVenue) { <span class="pill pill-done ms-1" title="Counts toward the revenue share">Parks &amp; Rec</span> }</td>
                                 <td class="text-nowrap">@Fmt.Days(e.StartDate, e.EndDate)</td>
                                 <td>@Fmt.Label(e.Kind)</td>
                                 <td>@e.Location</td>
@@ -96,6 +96,6 @@
         results = snap.Events.ToDictionary(r => r.Event.Id, r => r.PnL);
     }
 
-    private void New() => eventForm.Open(new Event { BusinessId = BusinessId });
+    private void New() => eventForm.Open(new Event { BusinessId = BusinessId, Kind = EventKind.Sports, AtPartnerVenue = !string.IsNullOrEmpty(ctx.Business.RevenueSharePartner) });
     private void Edit(Event e) => eventForm.Open(e);
 }
