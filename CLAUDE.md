@@ -21,7 +21,14 @@ Personal web app for running Donkey Fire Concessions, a concession stand busines
 - Inventory on-hand only changes through `InventoryAdjustment` rows (sales write `Sale` rows linked by `SaleId`), so history stays complete.
 
 ## Status and next steps
-- Created 2026-11-22. Not deployed yet; Fly.io files are ready (app `donkeyfire`, volume `donkeyfire_data`).
+- Created 2026-11-22. Deploying to Fly.io at `https://donkeyfire.level42homebuyers.com` (Fly app `donkeyfire`, volume `donkeyfire_data`, fly.dev host `donkeyfire.fly.dev`), same approach as BuildTrack: personal Fly account, deploy from the personal computer, single machine, Google sign-in with an email allowlist, Squarespace CNAME for the subdomain.
+- **Deployment progress (update as steps finish):**
+  - [ ] `fly apps create donkeyfire`, then `fly volumes create donkeyfire_data --size 1 --region iad --app donkeyfire`
+  - [ ] Google OAuth redirect URIs `https://donkeyfire.fly.dev/signin-google` and `https://donkeyfire.level42homebuyers.com/signin-google`
+  - [ ] `fly secrets set` Google client id/secret, `Authentication__AllowedEmails`, optionally `Square__AccessToken` (never commit these or paste them in chat)
+  - [ ] `fly deploy --ha=false`, sign in at donkeyfire.fly.dev
+  - [ ] `fly certs add donkeyfire.level42homebuyers.com`, Squarespace CNAME `donkeyfire` → `donkeyfire.fly.dev`, certificate issued
+  - [ ] Connect Square in Settings and run the first sync
 - Square: card sales come from the Square Orders API (token in `Square__AccessToken`, never in the DB); cash is rung up in the app. Square sales have `Source = Square` and a unique `ExternalId`. Square's API is unreachable from Claude's cloud sandbox, so test against sample JSON there.
 - Ideas, not started: reports by month for taxes (sales tax owed per period); par levels per event type; event checklists (load-out list); expense → inventory purchase in one step.
 
